@@ -16,12 +16,13 @@ Last updated: 2026-09-14
 
 ## Milestones
 
-| Milestone                   | Issues  | Done | Open |
-| --------------------------- | ------- | ---- | ---- |
-| Phase 1 - Foundation        | #1-#15  | 15   | 0    |
-| Phase 2 - Core Note Product | #16-#25 | 10   | 0    |
-| Phase 3 - Safety            | #26-#34 | 9    | 0    |
-| Phase 4 - Public API        | #35-#40 | 6    | 0    |
+| Milestone                    | Issues  | Done | Open |
+| ---------------------------- | ------- | ---- | ---- |
+| Phase 1 - Foundation         | #1-#15  | 15   | 0    |
+| Phase 2 - Core Note Product  | #16-#25 | 10   | 0    |
+| Phase 3 - Safety             | #26-#34 | 9    | 0    |
+| Phase 4 - Public API         | #35-#40 | 6    | 0    |
+| Phase 5 - MCP and connectors | #41-#45 | 5    | 0    |
 
 ## Phase 1 - Foundation
 
@@ -91,6 +92,18 @@ Goal: the canonical HTTP contract, usable without a browser.
 | 39  | Lease endpoints for agent writes                              | Done   | 4588ddf, 068489c          |
 | 40  | Public JSON read endpoint and /api/v1 contract tests          | Done   | 068489c, 3687cd2          |
 
+## Phase 5 - MCP and platform connectors
+
+Goal: ChatGPT (and later platforms) can create and share notes for the user.
+
+| #   | Issue                                                             | Status | Commit           |
+| --- | ----------------------------------------------------------------- | ------ | ---------------- |
+| 41  | OAuth 2.1 server: metadata, dynamic client registration, and PKCE | Done   | 9d09cc0, 603a330 |
+| 42  | Consent screen and immediate token revocation                     | Done   | 2e09f63, 9d09cc0 |
+| 43  | Accept OAuth access tokens across the API                         | Done   | 603a330          |
+| 44  | MCP Streamable HTTP endpoint with the 12-tool surface             | Done   | 9d09cc0, 603a330 |
+| 45  | Connector fallback and MCP/OAuth contract tests                   | Done   | 0f7642b          |
+
 ## Verification
 
 Run locally on 2026-09-14 against a Postgres 16.15 container.
@@ -101,8 +114,8 @@ Run locally on 2026-09-14 against a Postgres 16.15 container.
 | Types         | `npm run typecheck`                                 | pass                       |
 | Format        | `npm run format:check`                              | pass                       |
 | Migrations    | `npm run db:migrate`                                | applied to a real database |
-| Tests         | `npm test`                                          | 111 pass, 0 skipped        |
-| Build         | `npm run build`                                     | pass, 38 routes plus proxy |
+| Tests         | `npm test`                                          | 128 pass, 0 skipped        |
+| Build         | `npm run build`                                     | pass, 45 routes plus proxy |
 | Core boundary | ESLint probe importing `next/headers` in `src/core` | correctly rejected         |
 
 Phase 3 checks:
@@ -128,6 +141,19 @@ Phase 4 checks:
 | Cursor pagination | `tests/pagination.test.ts`; `/api/v1/notes?limit=`                  | stable across pages              |
 | Leases            | `tests/leases.test.ts`; live acquire over HTTP                      | expiry, commit, abort            |
 | Public JSON read  | `GET /api/v1/public/notes/{token}`; `tests/api-contract.test.ts`    | 200, private refused             |
+
+Phase 5 checks:
+
+| Check                    | Evidence                                                           | Result                        |
+| ------------------------ | ------------------------------------------------------------------ | ----------------------------- |
+| OAuth authorization code | `tests/oauth.test.ts`; live discovery, registration, authorize 302 | PKCE S256, single-use codes   |
+| Second client, no change | `tests/oauth.test.ts`; two dynamically registered clients          | pass                          |
+| Immediate revocation     | `tests/oauth.test.ts`; consent revoke kills tokens                 | access token rejected         |
+| 12 MCP tools             | `tests/mcp.test.ts`; live `tools/list`                             | 12 tools                      |
+| create_note share URL    | `tests/mcp.test.ts`; live `tools/call`                             | working `/n/` URL             |
+| Killed agent             | `tests/leases.test.ts`                                             | note unchanged, lease expires |
+| notes:read cannot write  | `tests/mcp.test.ts`                                                | publish/delete denied         |
+| Plain API fallback       | `tests/mcp.test.ts`; OAuth token on `/api/v1/notes`                | 200                           |
 
 The test suite now runs in full locally because a database was available:
 `docker run -d --name mn-pg -p 5433:5432 -e POSTGRES_PASSWORD=postgres
@@ -156,9 +182,15 @@ were missing from the sanitizer allowlist.
   provisioned yet.
 - Idempotency keys use the same in-memory pattern (`IdempotencyStore`); doc 03
   puts them in Redis too.
-- The API accepts personal API tokens. OAuth 2.1 bearer tokens are Phase 5 work.
 - Takedown notifications go through the logging notifier; no email provider is
   wired.
+- The ChatGPT connector has not been run against the real platform, and the
+  directory listing is deferred. MCP is exercised with a generic JSON-RPC
+  client, which is the same contract the connector uses.
+- OAuth consent is covered through the core services and the token endpoints,
+  but the human consent click and the Auth.js return after `next` have not run
+  in a browser with real provider credentials.
+- MCP is JSON-RPC over POST. Server-initiated SSE (GET) is not implemented.
 
 ## Notes and deviations
 
@@ -195,16 +227,28 @@ were missing from the sanitizer allowlist.
 - An idempotent replay returns the stored response with an
   `Idempotency-Replayed: true` header; a repeated key with a different body is a
   `422`.
+- Bearer auth routes by prefix: personal API tokens are `mn_`, OAuth access
+  tokens are `oa_`, and refresh tokens are `or_`. The two token kinds share one
+  Principal and one scope model.
+- OAuth discovery lives at `/.well-known/oauth-authorization-server` and
+  `/.well-known/oauth-protected-resource`. A leading-dot folder is not a valid
+  Next route segment, so they are served from API routes through rewrites.
+- The MCP tool surface is `src/core/mcp.ts`, not the HTTP route. The route only
+  speaks JSON-RPC, so another platform reuses the tools without a core change
+  (ADR-0006).
+- `begin_edit`, `append_edit`, and `commit_edit` stage against the lease. The
+  draft is untouched until commit; an abort or an expiry discards staging.
 
 ## Open items carried from the design docs
 
 Resolved in Phase 3: share-link editing in the UI, email verification before
 public indexing (A5), rate-limit numbers (A6), and the CI action bump.
+Resolved in Phase 5: prompt-injection framing (S11, untrusted content) and the
+OAuth 2.1 server with bearer tokens.
 
 | Item                                            | Source           | Target                |
 | ----------------------------------------------- | ---------------- | --------------------- |
-| Prompt-injection hardening                      | S11              | Phase 5               |
-| OAuth 2.1 server and bearer tokens              | doc 09, ADR-0006 | Phase 5               |
+| ChatGPT connector end-to-end and directory list | doc 10           | Before launch         |
 | Moderation vendor and known-materials hash feed | A6               | Before public signups |
 | Redis driver for rate limits and idempotency    | doc 03, ADR-0009 | Before public signups |
 | Email provider for takedown notifications       | A8               | Before public signups |
