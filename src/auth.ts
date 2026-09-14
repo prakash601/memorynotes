@@ -44,8 +44,8 @@ export async function auth() {
   return getAuth().auth();
 }
 
-export async function signInWithProvider(provider: "google" | "github") {
-  await getAuth().signIn(provider, { redirectTo: "/" });
+export async function signInWithProvider(provider: "google" | "github", redirectTo = "/") {
+  await getAuth().signIn(provider, { redirectTo });
 }
 
 export async function signOutCurrent() {
