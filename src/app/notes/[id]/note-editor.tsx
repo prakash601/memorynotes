@@ -15,6 +15,8 @@ interface VersionItem {
 
 interface NoteEditorProps {
   noteId: string;
+  shareToken?: string | null;
+  isOwner?: boolean;
   initialTitle: string;
   initialContent: string;
   initialRevision: number;
@@ -48,6 +50,7 @@ export function NoteEditor(props: NoteEditorProps) {
     setStatus(null);
     const result = await saveDraftAction({
       noteId: props.noteId,
+      shareToken: props.shareToken,
       title,
       content,
       baseRevision: revision,
@@ -73,6 +76,7 @@ export function NoteEditor(props: NoteEditorProps) {
     setStatus(null);
     const result = await publishAction({
       noteId: props.noteId,
+      shareToken: props.shareToken,
       message: message.trim() || undefined,
     });
     setBusy(false);
@@ -89,7 +93,11 @@ export function NoteEditor(props: NoteEditorProps) {
   async function handleRestore(versionNumber: number) {
     setBusy(true);
     setStatus(null);
-    const result = await restoreAction({ noteId: props.noteId, versionNumber });
+    const result = await restoreAction({
+      noteId: props.noteId,
+      shareToken: props.shareToken,
+      versionNumber,
+    });
     setBusy(false);
 
     if (result.ok && result.revision !== undefined) {
@@ -113,6 +121,11 @@ export function NoteEditor(props: NoteEditorProps) {
                 ? `published v${props.publishedVersionNumber}`
                 : "not published"}
             </p>
+            {props.isOwner === false ? (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                Editing via a shared link
+              </p>
+            ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <input

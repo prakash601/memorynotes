@@ -49,6 +49,12 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
                   >
                     Notes
                   </Link>
+                  <Link
+                    href="/settings"
+                    className="text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+                  >
+                    Settings
+                  </Link>
                   <span className="hidden text-zinc-400 sm:inline">
                     {user.email ?? user.name ?? "Signed in"}
                   </span>
@@ -73,6 +79,22 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
           </div>
         </header>
         {children}
+        <footer className="mt-auto border-t border-zinc-200 dark:border-zinc-800">
+          <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-4 px-6 py-4 text-xs text-zinc-500">
+            <Link href="/aup" className="hover:text-zinc-900 dark:hover:text-zinc-100">
+              Acceptable Use
+            </Link>
+            <Link href="/terms" className="hover:text-zinc-900 dark:hover:text-zinc-100">
+              Terms
+            </Link>
+            <Link href="/privacy" className="hover:text-zinc-900 dark:hover:text-zinc-100">
+              Privacy
+            </Link>
+            <Link href="/subprocessors" className="hover:text-zinc-900 dark:hover:text-zinc-100">
+              Subprocessors
+            </Link>
+          </div>
+        </footer>
       </body>
     </html>
   );

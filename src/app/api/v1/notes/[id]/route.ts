@@ -1,13 +1,8 @@
 import { NextResponse } from "next/server";
-import {
-  getOwnedNote,
-  setVisibility,
-  softDeleteNote,
-  updateDraft,
-  type ShareExpiryOption,
-} from "@/core";
+import { getNoteView, setVisibility, softDeleteNote, updateDraft } from "@/core";
 import { getDb } from "@/db";
-import { assertCsrf, problemResponse, readJsonBody } from "@/lib/http";
+import { applyRateLimitHeaders, assertCsrf, problemResponse, readJsonBody } from "@/lib/http";
+import { limit } from "@/lib/rate-limit";
 import {
   serializeDraft,
   serializeNote,
@@ -24,7 +19,7 @@ export async function GET(_request: Request, context: RouteContext) {
   try {
     const user = await requireUser();
     const { id } = await context.params;
-    const view = await getOwnedNote(getDb(), id, user.id);
+    const view = await getNoteView(getDb(), id, user.id);
 
     return NextResponse.json({
       ...serializeNote(view.note),
@@ -44,12 +39,14 @@ interface PatchBody {
   content?: string;
   base_revision?: number;
   visibility?: string;
+  share_token?: string;
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
   try {
     const user = await requireUser();
     assertCsrf(request);
+    const state = await limit("api_account_minute", user.id);
     const { id } = await context.params;
     const body = await readJsonBody<PatchBody>(request);
     const db = getDb();
@@ -81,17 +78,21 @@ export async function PATCH(request: Request, context: RouteContext) {
       draft = await updateDraft(db, {
         noteId: id,
         userId: user.id,
+        shareToken: body.share_token,
         title: body.title,
         content: body.content,
         baseRevision: body.base_revision,
       });
     }
 
-    return NextResponse.json({
-      id,
-      visibility: visibility ?? null,
-      draft: draft ? serializeDraft(draft) : null,
-    });
+    return applyRateLimitHeaders(
+      NextResponse.json({
+        id,
+        visibility: visibility ?? null,
+        draft: draft ? serializeDraft(draft) : null,
+      }),
+      state,
+    );
   } catch (error) {
     return problemResponse(error);
   }
@@ -101,13 +102,15 @@ export async function DELETE(request: Request, context: RouteContext) {
   try {
     const user = await requireUser();
     assertCsrf(request);
+    const state = await limit("api_account_minute", user.id);
     const { id } = await context.params;
     const note = await softDeleteNote(getDb(), { noteId: id, ownerId: user.id });
 
-    return NextResponse.json({ id: note.id, deleted_at: note.deletedAt });
+    return applyRateLimitHeaders(
+      NextResponse.json({ id: note.id, deleted_at: note.deletedAt }),
+      state,
+    );
   } catch (error) {
     return problemResponse(error);
   }
 }
-
-export type { ShareExpiryOption };

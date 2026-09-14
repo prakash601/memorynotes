@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { createNote, listNotes, type ShareExpiryOption } from "@/core";
 import { getDb } from "@/db";
-import { assertCsrf, problemResponse, readJsonBody } from "@/lib/http";
+import { applyRateLimitHeaders, assertCsrf, problemResponse, readJsonBody } from "@/lib/http";
+import { limit } from "@/lib/rate-limit";
+import { clientIp, hashIp } from "@/lib/request";
 import { serializeDraft, serializeNote, serializeShare } from "@/lib/serializers";
 import { buildShareUrl } from "@/lib/share-url";
 import { requireUser } from "@/lib/session";
@@ -19,6 +21,12 @@ export async function POST(request: Request) {
   try {
     const user = await requireUser();
     assertCsrf(request);
+
+    // Doc 06: 50 creates/day/account and 200/day/IP.
+    const accountState = await limit("note_create_account", user.id);
+    const ipState = await limit("note_create_ip", hashIp(clientIp(request)));
+    const state = accountState.remaining <= ipState.remaining ? accountState : ipState;
+
     const body = await readJsonBody<CreateNoteBody>(request);
 
     const { note, draft, share, rawToken } = await createNote(getDb(), {
@@ -29,14 +37,17 @@ export async function POST(request: Request) {
       expiresIn: body.expires_in,
     });
 
-    return NextResponse.json(
-      {
-        ...serializeNote(note),
-        draft: serializeDraft(draft),
-        share: serializeShare(share, rawToken),
-        published_version: null,
-      },
-      { status: 201 },
+    return applyRateLimitHeaders(
+      NextResponse.json(
+        {
+          ...serializeNote(note),
+          draft: serializeDraft(draft),
+          share: serializeShare(share, rawToken),
+          published_version: null,
+        },
+        { status: 201 },
+      ),
+      state,
     );
   } catch (error) {
     return problemResponse(error);

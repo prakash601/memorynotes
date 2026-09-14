@@ -18,6 +18,7 @@ export async function saveDraftAction(input: {
   title: string;
   content: string;
   baseRevision: number;
+  shareToken?: string | null;
 }): Promise<EditorActionResult> {
   const user = await requireUserOrRedirect();
 
@@ -25,6 +26,7 @@ export async function saveDraftAction(input: {
     const draft = await updateDraft(getDb(), {
       noteId: input.noteId,
       userId: user.id,
+      shareToken: input.shareToken,
       title: input.title,
       content: input.content,
       baseRevision: input.baseRevision,
@@ -43,6 +45,7 @@ export async function saveDraftAction(input: {
 export async function publishAction(input: {
   noteId: string;
   message?: string;
+  shareToken?: string | null;
 }): Promise<EditorActionResult> {
   const user = await requireUserOrRedirect();
 
@@ -50,6 +53,7 @@ export async function publishAction(input: {
     const version = await publishNote(getDb(), {
       noteId: input.noteId,
       userId: user.id,
+      shareToken: input.shareToken,
       message: input.message ?? null,
     });
     revalidatePath(`/notes/${input.noteId}`);
@@ -62,6 +66,7 @@ export async function publishAction(input: {
 export async function restoreAction(input: {
   noteId: string;
   versionNumber: number;
+  shareToken?: string | null;
 }): Promise<EditorActionResult> {
   const user = await requireUserOrRedirect();
 
@@ -69,6 +74,7 @@ export async function restoreAction(input: {
     const { draft } = await restoreVersion(getDb(), {
       noteId: input.noteId,
       userId: user.id,
+      shareToken: input.shareToken,
       versionNumber: input.versionNumber,
     });
     revalidatePath(`/notes/${input.noteId}`);
