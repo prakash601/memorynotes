@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import type { Database } from "@/db";
 import {
   noteDrafts,
@@ -27,6 +27,7 @@ import {
   ValidationError,
 } from "./errors";
 import { defaultExpiry, resolveExpiry } from "./expiry";
+import { decodeCursor, encodeCursor, normalizeLimit } from "./cursor";
 import { runModeration, type Moderator } from "./moderation";
 import { decryptToken, encryptToken, generateShareToken, hashToken, tokenPrefix } from "./tokens";
 import { assertContentSize, normalizeContent, normalizeTitle } from "./validation";
@@ -230,28 +231,21 @@ export interface NoteListItem {
   } | null;
 }
 
-export async function listNotes(db: Database, ownerId: string): Promise<NoteListItem[]> {
-  const rows = await db
-    .select({
-      id: notes.id,
-      visibility: notes.visibility,
-      title: noteDrafts.title,
-      revision: noteDrafts.revision,
-      updatedAt: noteDrafts.updatedAt,
-      publishedVersionNumber: noteVersions.versionNumber,
-      shareAccess: noteShares.access,
-      shareExpiresAt: noteShares.expiresAt,
-      sharePrefix: noteShares.tokenPrefix,
-      shareCiphertext: noteShares.tokenCiphertext,
-    })
-    .from(notes)
-    .innerJoin(noteDrafts, eq(noteDrafts.noteId, notes.id))
-    .leftJoin(noteVersions, eq(noteVersions.id, notes.publishedVersionId))
-    .leftJoin(noteShares, and(eq(noteShares.noteId, notes.id), isNull(noteShares.revokedAt)))
-    .where(and(eq(notes.ownerId, ownerId), isNull(notes.deletedAt)))
-    .orderBy(desc(noteDrafts.updatedAt));
+interface NoteListRow {
+  id: string;
+  visibility: NoteVisibility;
+  title: string;
+  revision: number;
+  updatedAt: Date;
+  publishedVersionNumber: number | null;
+  shareAccess: ShareAccessLevel | null;
+  shareExpiresAt: Date | null;
+  sharePrefix: string | null;
+  shareCiphertext: string | null;
+}
 
-  return rows.map((row) => ({
+function mapNoteListRow(row: NoteListRow): NoteListItem {
+  return {
     id: row.id,
     title: row.title,
     visibility: row.visibility,
@@ -267,7 +261,75 @@ export async function listNotes(db: Database, ownerId: string): Promise<NoteList
             rawToken: row.shareCiphertext ? decryptToken(row.shareCiphertext, shareSecret()) : null,
           }
         : null,
-  }));
+  };
+}
+
+const NOTE_LIST_COLUMNS = {
+  id: notes.id,
+  visibility: notes.visibility,
+  title: noteDrafts.title,
+  revision: noteDrafts.revision,
+  updatedAt: noteDrafts.updatedAt,
+  publishedVersionNumber: noteVersions.versionNumber,
+  shareAccess: noteShares.access,
+  shareExpiresAt: noteShares.expiresAt,
+  sharePrefix: noteShares.tokenPrefix,
+  shareCiphertext: noteShares.tokenCiphertext,
+};
+
+export async function listNotes(db: Database, ownerId: string): Promise<NoteListItem[]> {
+  const rows = await db
+    .select(NOTE_LIST_COLUMNS)
+    .from(notes)
+    .innerJoin(noteDrafts, eq(noteDrafts.noteId, notes.id))
+    .leftJoin(noteVersions, eq(noteVersions.id, notes.publishedVersionId))
+    .leftJoin(noteShares, and(eq(noteShares.noteId, notes.id), isNull(noteShares.revokedAt)))
+    .where(and(eq(notes.ownerId, ownerId), isNull(notes.deletedAt)))
+    .orderBy(desc(noteDrafts.updatedAt));
+
+  return rows.map(mapNoteListRow);
+}
+
+export interface NotesPage {
+  data: NoteListItem[];
+  nextCursor: string | null;
+}
+
+/** Keyset pagination on `(draft.updated_at, note.id)` desc (doc 09). */
+export async function listNotesPage(
+  db: Database,
+  ownerId: string,
+  options: { limit?: number; cursor?: string | null } = {},
+): Promise<NotesPage> {
+  const limit = normalizeLimit(options.limit);
+  const cursor = options.cursor ? decodeCursor<{ u?: string; i?: string }>(options.cursor) : null;
+  const cursorDate = cursor?.u ? new Date(cursor.u) : null;
+  const cursorId = cursor?.i ?? null;
+  const keyset =
+    cursorDate && cursorId
+      ? or(
+          lt(noteDrafts.updatedAt, cursorDate),
+          and(eq(noteDrafts.updatedAt, cursorDate), lt(notes.id, cursorId)),
+        )
+      : undefined;
+
+  const rows = await db
+    .select(NOTE_LIST_COLUMNS)
+    .from(notes)
+    .innerJoin(noteDrafts, eq(noteDrafts.noteId, notes.id))
+    .leftJoin(noteVersions, eq(noteVersions.id, notes.publishedVersionId))
+    .leftJoin(noteShares, and(eq(noteShares.noteId, notes.id), isNull(noteShares.revokedAt)))
+    .where(and(eq(notes.ownerId, ownerId), isNull(notes.deletedAt), keyset))
+    .orderBy(desc(noteDrafts.updatedAt), desc(notes.id))
+    .limit(limit + 1);
+
+  const hasMore = rows.length > limit;
+  const data = rows.slice(0, limit).map(mapNoteListRow);
+  const last = data[data.length - 1];
+  const nextCursor =
+    hasMore && last ? encodeCursor({ u: last.updatedAt.toISOString(), i: last.id }) : null;
+
+  return { data, nextCursor };
 }
 
 export interface UpdateDraftInput {
@@ -419,6 +481,38 @@ export async function listVersions(
     .from(noteVersions)
     .where(eq(noteVersions.noteId, noteId))
     .orderBy(desc(noteVersions.versionNumber));
+}
+
+export interface VersionsPage {
+  data: NoteVersion[];
+  nextCursor: string | null;
+}
+
+/** Keyset pagination on `version_number` desc (doc 09). */
+export async function listVersionsPage(
+  db: Database,
+  noteId: string,
+  ownerId: string,
+  options: { limit?: number; cursor?: string | null; shareToken?: string | null } = {},
+): Promise<VersionsPage> {
+  await assertCanEdit(db, { noteId, userId: ownerId, shareToken: options.shareToken });
+  const limit = normalizeLimit(options.limit);
+  const cursor = options.cursor ? decodeCursor<{ v?: number }>(options.cursor) : null;
+  const keyset = cursor?.v !== undefined ? lt(noteVersions.versionNumber, cursor.v) : undefined;
+
+  const rows = await db
+    .select()
+    .from(noteVersions)
+    .where(and(eq(noteVersions.noteId, noteId), keyset))
+    .orderBy(desc(noteVersions.versionNumber))
+    .limit(limit + 1);
+
+  const hasMore = rows.length > limit;
+  const data = rows.slice(0, limit);
+  const last = data[data.length - 1];
+  const nextCursor = hasMore && last ? encodeCursor({ v: last.versionNumber }) : null;
+
+  return { data, nextCursor };
 }
 
 export async function getVersion(

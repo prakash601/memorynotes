@@ -117,8 +117,7 @@ export function assertCsrf(request: Request): void {
   }
 }
 
-export async function readJsonBody<T = Record<string, unknown>>(request: Request): Promise<T> {
-  const text = await request.text();
+export function parseJsonBody<T = Record<string, unknown>>(text: string): T {
   if (!text.trim()) {
     return {} as T;
   }
@@ -127,4 +126,8 @@ export async function readJsonBody<T = Record<string, unknown>>(request: Request
   } catch {
     throw new ValidationError("Request body is not valid JSON");
   }
+}
+
+export async function readJsonBody<T = Record<string, unknown>>(request: Request): Promise<T> {
+  return parseJsonBody<T>(await request.text());
 }

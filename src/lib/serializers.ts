@@ -1,4 +1,4 @@
-import type { Note, NoteDraft, NoteShare, NoteVersion, Report } from "@/db/schema";
+import type { ApiToken, Note, NoteDraft, NoteShare, NoteVersion, Report } from "@/db/schema";
 import { buildShareUrl } from "./share-url";
 
 export function serializeShare(share: NoteShare, rawToken: string | null) {
@@ -57,5 +57,18 @@ export function serializeReport(report: Report) {
     resolution_note: report.resolutionNote,
     created_at: report.createdAt,
     updated_at: report.updatedAt,
+  };
+}
+
+/** Never exposes the token hash. The raw value is returned once, at creation. */
+export function serializeApiToken(token: ApiToken) {
+  return {
+    id: token.id,
+    name: token.name,
+    prefix: token.tokenPrefix,
+    scopes: token.scopes,
+    last_used_at: token.lastUsedAt,
+    expires_at: token.expiresAt,
+    created_at: token.createdAt,
   };
 }

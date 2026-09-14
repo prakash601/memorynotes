@@ -27,3 +27,8 @@ export async function requireUser(): Promise<SessionUser> {
   }
   return user;
 }
+
+/** For session-only operations (account and token management). */
+export async function requireSessionUser(): Promise<SessionUser> {
+  return requireUser();
+}
