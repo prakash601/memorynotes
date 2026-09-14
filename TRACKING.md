@@ -77,8 +77,26 @@ Phase 1 exit checks, run locally on 2026-09-14:
 The 3 skipped tests are the schema integrity tests, which skip when
 `DATABASE_URL` is absent. They run for real in CI against the Postgres service.
 
-Not yet verified anywhere: migrations applied against a live database. No
-database is configured on this machine yet, so CI is the first real proof.
+### CI
+
+Green on `main`: run 34818442868 (commit 010dfc1). CI applies the migrations to
+a Postgres 16 service container, runs the schema integrity tests against it, and
+builds the app. This is the first proof the migration applies to a real database
+and that the schema tests pass with a live schema.
+
+One warning remains: `actions/checkout@v4` and `actions/setup-node@v4` target
+Node 20, which GitHub now forces onto Node 24. Not a failure, but they should be
+bumped to v5.
+
+### Not yet verified
+
+- Google and GitHub sign-in have not been exercised with real provider
+  credentials. The Auth.js config, Drizzle adapter wiring, and route handlers are
+  in place and type-check, but "sign in works end to end" is unproven, so issue
+  #11's acceptance criterion is only partly met.
+- No deployment exists yet. The roadmap's Phase 1 exit criterion "staging is
+  reachable on both domains" is not met, and the share-domain split (ADR-0007)
+  needs a domain decision before it can be.
 
 ## Notes and deviations
 
