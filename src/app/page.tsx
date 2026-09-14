@@ -1,4 +1,9 @@
-export default function Home() {
+import Link from "next/link";
+import { getCurrentUser } from "@/lib/session";
+
+export default async function Home() {
+  const user = await getCurrentUser();
+
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center gap-6 px-6 py-16">
       <div>
@@ -7,8 +12,10 @@ export default function Home() {
           Shareable memory for your agents.
         </p>
       </div>
-      <p className="text-sm text-zinc-600 dark:text-zinc-400">
-        The application is under construction. Sign-in and note creation land in the next milestone.
+      <p className="text-sm">
+        <Link href={user ? "/dashboard" : "/signin"} className="font-medium underline">
+          {user ? "Go to your notes" : "Sign in to get started"}
+        </Link>
       </p>
     </main>
   );
