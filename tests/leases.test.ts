@@ -151,6 +151,43 @@ describeWithDatabase("note leases", () => {
     ).rejects.toMatchObject({ code: "lease_expired" });
   });
 
+  it("leaves the note unchanged when a lease dies mid-edit", async () => {
+    const { userId, note } = await seed();
+    const start = new Date("2026-09-14T10:00:00.000Z");
+    const lease = await acquireLease(db, {
+      noteId: note.id,
+      holderId: userId,
+      holderType: "ai",
+      now: start,
+      ttlSeconds: 60,
+    });
+
+    // The agent stages an edit, then is killed; the commit never arrives.
+    const afterExpiry = new Date(start.getTime() + 120_000);
+    await commitLease(db, {
+      noteId: note.id,
+      leaseToken: lease.leaseToken,
+      mode: "stage",
+      content: "# rewritten by a dead agent",
+      now: afterExpiry,
+    }).catch(() => undefined);
+
+    const [draft] = await sql<{ content: string; revision: number }[]>`
+      select content, revision from note_drafts where note_id = ${note.id}
+    `;
+    expect(draft).toEqual({ content: "# one", revision: 1 });
+    // The lease is gone on its own, with no cleanup call.
+    expect(await getActiveLease(db, note.id, afterExpiry)).toBeNull();
+    await expect(
+      acquireLease(db, {
+        noteId: note.id,
+        holderId: userId,
+        holderType: "ai",
+        now: afterExpiry,
+      }),
+    ).resolves.toMatchObject({ baseRevision: 1 });
+  });
+
   it("drops staging on abort", async () => {
     const { userId, note } = await seed();
     const lease = await acquireLease(db, { noteId: note.id, holderId: userId, holderType: "ai" });
