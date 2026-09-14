@@ -23,6 +23,7 @@ Last updated: 2026-09-14
 | Phase 3 - Safety             | #26-#34 | 9    | 0    |
 | Phase 4 - Public API         | #35-#40 | 6    | 0    |
 | Phase 5 - MCP and connectors | #41-#45 | 5    | 0    |
+| Phase 6 - Launch readiness   | #46-#51 | 6    | 0    |
 
 ## Phase 1 - Foundation
 
@@ -104,6 +105,19 @@ Goal: ChatGPT (and later platforms) can create and share notes for the user.
 | 44  | MCP Streamable HTTP endpoint with the 12-tool surface             | Done   | 9d09cc0, 603a330 |
 | 45  | Connector fallback and MCP/OAuth contract tests                   | Done   | 0f7642b          |
 
+## Phase 6 - Launch readiness
+
+Goal: safe to open signups.
+
+| #   | Issue                                                     | Status | Commit           |
+| --- | --------------------------------------------------------- | ------ | ---------------- |
+| 46  | Structured logging, metrics, error tracking, and alerting | Done   | c911538, 00a3a91 |
+| 47  | Non-breaking secret rotation (S13)                        | Done   | c911538, 00a3a91 |
+| 48  | CI dependency scanning, SAST, and Dependabot (S14)        | Done   | 9be2fa5          |
+| 49  | Load and DoS test tooling with recorded targets           | Done   | c2c57fc          |
+| 50  | Status page, support path, and security disclosure        | Done   | c911538, 9be2fa5 |
+| 51  | Runbooks and launch gate checklist                        | Done   | c2c57fc          |
+
 ## Verification
 
 Run locally on 2026-09-14 against a Postgres 16.15 container.
@@ -114,8 +128,8 @@ Run locally on 2026-09-14 against a Postgres 16.15 container.
 | Types         | `npm run typecheck`                                 | pass                       |
 | Format        | `npm run format:check`                              | pass                       |
 | Migrations    | `npm run db:migrate`                                | applied to a real database |
-| Tests         | `npm test`                                          | 128 pass, 0 skipped        |
-| Build         | `npm run build`                                     | pass, 45 routes plus proxy |
+| Tests         | `npm test`                                          | 140 pass, 0 skipped        |
+| Build         | `npm run build`                                     | pass, 48 routes plus proxy |
 | Core boundary | ESLint probe importing `next/headers` in `src/core` | correctly rejected         |
 
 Phase 3 checks:
@@ -155,6 +169,19 @@ Phase 5 checks:
 | notes:read cannot write  | `tests/mcp.test.ts`                                                | publish/delete denied         |
 | Plain API fallback       | `tests/mcp.test.ts`; OAuth token on `/api/v1/notes`                | 200                           |
 
+Phase 6 checks:
+
+| Check              | Evidence                                                            | Result                         |
+| ------------------ | ------------------------------------------------------------------- | ------------------------------ |
+| Alert rules        | `tests/metrics.test.ts`                                             | error rate, latency, jobs fire |
+| Metrics endpoint   | `GET /api/metrics` guarded by the scheduler secret                  | 401 without, text with         |
+| Job failure signal | purge/alerts record `job_failures_total`                            | feeds the alert rule           |
+| Key rotation       | `tests/secrets.test.ts`                                             | old ciphertext still decrypts  |
+| CI scanning        | `.github/workflows/ci.yml` audit plus CodeQL; Dependabot configured | runs on push and PR            |
+| Load test          | `npm run load:test`; read path at 10 concurrent                     | p95 47ms, 0 errors, target met |
+| Status and support | `/status` returns 200; `SUPPORT_EMAIL` in the footer                | live                           |
+| Runbooks           | `runbooks/*` and `LAUNCH_CHECKLIST.md`                              | written, rehearsal pending     |
+
 The test suite now runs in full locally because a database was available:
 `docker run -d --name mn-pg -p 5433:5432 -e POSTGRES_PASSWORD=postgres
 -e POSTGRES_USER=postgres -e POSTGRES_DB=memorynotes_test postgres:16`, then
@@ -191,6 +218,13 @@ were missing from the sanitizer allowlist.
   but the human consent click and the Auth.js return after `next` have not run
   in a browser with real provider credentials.
 - MCP is JSON-RPC over POST. Server-initiated SSE (GET) is not implemented.
+- No external penetration test has run. CI scanning and `SECURITY.md` are in
+  place; gate 7 is pending.
+- An external error tracker and a pager are not connected. Alerts dispatch to
+  the structured log and to `ALERT_WEBHOOK_URL` when one is set.
+- The create path was not load-tested locally because the per-account cap is
+  50/day; only the read path was measured.
+- The runbooks are written but none has been rehearsed.
 
 ## Notes and deviations
 
@@ -238,23 +272,33 @@ were missing from the sanitizer allowlist.
   (ADR-0006).
 - `begin_edit`, `append_edit`, and `commit_edit` stage against the lease. The
   draft is untouched until commit; an abort or an expiry discards staging.
+- Metrics and logs live in-process (`src/lib/metrics.ts`, `src/lib/logger.ts`).
+  The registry exposes a Prometheus text endpoint behind the scheduler secret;
+  production can export the same snapshot to a real backend.
+- Alert thresholds (5% 5xx, p95 500ms, any job failure) live in
+  `src/lib/metrics.ts` and are evaluated by the scheduled alerts endpoint.
+- The share-token key set is `SHARE_TOKEN_SECRETS`, newest first. Dropping an
+  old key breaks display (not resolution) of links encrypted with it; rotate a
+  link if that happens.
 
 ## Open items carried from the design docs
 
 Resolved in Phase 3: share-link editing in the UI, email verification before
 public indexing (A5), rate-limit numbers (A6), and the CI action bump.
-Resolved in Phase 5: prompt-injection framing (S11, untrusted content) and the
-OAuth 2.1 server with bearer tokens.
+Resolved in Phase 5: prompt-injection framing (S11) and the OAuth 2.1 server.
+Resolved in Phase 6 (code): observability and alerting, secret rotation (S13),
+and CI scanning (S14).
 
-| Item                                            | Source           | Target                |
-| ----------------------------------------------- | ---------------- | --------------------- |
-| ChatGPT connector end-to-end and directory list | doc 10           | Before launch         |
-| Moderation vendor and known-materials hash feed | A6               | Before public signups |
-| Redis driver for rate limits and idempotency    | doc 03, ADR-0009 | Before public signups |
-| Email provider for takedown notifications       | A8               | Before public signups |
-| Secrets rotation                                | S13              | Phase 6               |
-| Dependency scanning and pentest                 | S14              | Phase 6               |
-| Domain selection and DNS for the share domain   | doc 00, ADR-0007 | Before deploy         |
+| Item                                             | Source           | Target                |
+| ------------------------------------------------ | ---------------- | --------------------- |
+| External penetration test                        | S14              | Before launch         |
+| ChatGPT connector end-to-end and directory list  | doc 10           | Before launch         |
+| Moderation vendor and known-materials hash feed  | A6               | Before public signups |
+| Redis driver for rate limits and idempotency     | doc 03, ADR-0009 | Before public signups |
+| Email provider for takedown notifications        | A8               | Before public signups |
+| Error tracker and pager connected to alerts      | NFR-5            | Before public signups |
+| Rehearse takedown, breach, and incident runbooks | doc 11           | Before launch         |
+| Domain selection and DNS for the share domain    | doc 00, ADR-0007 | Before deploy         |
 
 ## How to keep this current
 
