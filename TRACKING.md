@@ -101,7 +101,9 @@ were missing from the sanitizer allowlist.
   page, so it can ship a CSP with `script-src 'none'`.
 - Email uniqueness uses `text` with a `lower(email)` unique index instead of
   `citext`.
-- `next-env.d.ts` is committed; `tsconfig.tsbuildinfo` is ignored.
+- `next-env.d.ts` and `tsconfig.tsbuildinfo` are ignored. Next rewrites
+  `next-env.d.ts` to point at `.next/dev/types` in development and
+  `.next/types` in a build, so tracking it guarantees a dirty tree.
 - `@auth/drizzle-adapter` is on 1.x and `next-auth` on 5.0.0-beta; re-check both
   when the beta ends.
 
