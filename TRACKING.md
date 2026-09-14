@@ -21,6 +21,7 @@ Last updated: 2026-09-14
 | Phase 1 - Foundation        | #1-#15  | 15   | 0    |
 | Phase 2 - Core Note Product | #16-#25 | 10   | 0    |
 | Phase 3 - Safety            | #26-#34 | 9    | 0    |
+| Phase 4 - Public API        | #35-#40 | 6    | 0    |
 
 ## Phase 1 - Foundation
 
@@ -77,6 +78,19 @@ Goal: the controls that make public links survivable.
 | 33  | Gate public indexing on a verified email (A5)                       | Done   | b672aba          |
 | 34  | Bump CI actions to v5                                               | Done   | 2906122          |
 
+## Phase 4 - Public API and tokens
+
+Goal: the canonical HTTP contract, usable without a browser.
+
+| #   | Issue                                                         | Status | Commit                    |
+| --- | ------------------------------------------------------------- | ------ | ------------------------- |
+| 35  | Personal API tokens: create, list, revoke, scopes, shown once | Done   | 4588ddf, 068489c, 42f355f |
+| 36  | Bearer token auth and scope enforcement across /api/v1        | Done   | 4588ddf, 068489c          |
+| 37  | Idempotency keys on writes                                    | Done   | 4588ddf, 068489c          |
+| 38  | Cursor pagination that is stable across pages                 | Done   | 4588ddf, 068489c          |
+| 39  | Lease endpoints for agent writes                              | Done   | 4588ddf, 068489c          |
+| 40  | Public JSON read endpoint and /api/v1 contract tests          | Done   | 068489c, 3687cd2          |
+
 ## Verification
 
 Run locally on 2026-09-14 against a Postgres 16.15 container.
@@ -87,8 +101,8 @@ Run locally on 2026-09-14 against a Postgres 16.15 container.
 | Types         | `npm run typecheck`                                 | pass                       |
 | Format        | `npm run format:check`                              | pass                       |
 | Migrations    | `npm run db:migrate`                                | applied to a real database |
-| Tests         | `npm test`                                          | 87 pass, 0 skipped         |
-| Build         | `npm run build`                                     | pass, 30 routes plus proxy |
+| Tests         | `npm test`                                          | 111 pass, 0 skipped        |
+| Build         | `npm run build`                                     | pass, 38 routes plus proxy |
 | Core boundary | ESLint probe importing `next/headers` in `src/core` | correctly rejected         |
 
 Phase 3 checks:
@@ -103,6 +117,17 @@ Phase 3 checks:
 | Policy pages           | `/aup`, `/terms`, `/privacy`, `/subprocessors`                         | live, HTTP 200              |
 | Share-link editing     | read page emits an edit link; `getNoteView` honors the token           | pass                        |
 | Email gate (A5)        | `tests/notes.test.ts`                                                  | `email_not_verified`        |
+
+Phase 4 checks:
+
+| Check             | Evidence                                                            | Result                           |
+| ----------------- | ------------------------------------------------------------------- | -------------------------------- |
+| Token lifecycle   | `tests/api-tokens.test.ts`; `/settings/tokens` UI                   | create, list, revoke, shown once |
+| Bearer and scopes | `tests/api-contract.test.ts`                                        | `notes:read` cannot write (403)  |
+| Idempotent retry  | `tests/api-contract.test.ts`; live retry returned an identical body | does not double-apply            |
+| Cursor pagination | `tests/pagination.test.ts`; `/api/v1/notes?limit=`                  | stable across pages              |
+| Leases            | `tests/leases.test.ts`; live acquire over HTTP                      | expiry, commit, abort            |
+| Public JSON read  | `GET /api/v1/public/notes/{token}`; `tests/api-contract.test.ts`    | 200, private refused             |
 
 The test suite now runs in full locally because a database was available:
 `docker run -d --name mn-pg -p 5433:5432 -e POSTGRES_PASSWORD=postgres
@@ -129,6 +154,9 @@ were missing from the sanitizer allowlist.
 - Rate-limit counters use the in-memory driver. Redis is the documented
   production driver and is a drop-in behind `RateLimitStore`, but no Redis is
   provisioned yet.
+- Idempotency keys use the same in-memory pattern (`IdempotencyStore`); doc 03
+  puts them in Redis too.
+- The API accepts personal API tokens. OAuth 2.1 bearer tokens are Phase 5 work.
 - Takedown notifications go through the logging notifier; no email provider is
   wired.
 
@@ -159,6 +187,14 @@ were missing from the sanitizer allowlist.
   The store is in-memory locally and Redis in production (ADR-0009).
 - The subprocessor list marks vendors that are still to be selected instead of
   naming ones we do not use.
+- `/api/v1` accepts either a Bearer token or the session cookie. Token callers
+  are scope-checked; a session is the owner and has every scope.
+- Token management and account delete are session-only on purpose. A leaked API
+  token cannot mint or revoke tokens, and cannot destroy an account. This is a
+  deliberate deviation from doc 09, where those endpoints list `bearer`.
+- An idempotent replay returns the stored response with an
+  `Idempotency-Replayed: true` header; a repeated key with a different body is a
+  `422`.
 
 ## Open items carried from the design docs
 
@@ -168,8 +204,9 @@ public indexing (A5), rate-limit numbers (A6), and the CI action bump.
 | Item                                            | Source           | Target                |
 | ----------------------------------------------- | ---------------- | --------------------- |
 | Prompt-injection hardening                      | S11              | Phase 5               |
+| OAuth 2.1 server and bearer tokens              | doc 09, ADR-0006 | Phase 5               |
 | Moderation vendor and known-materials hash feed | A6               | Before public signups |
-| Redis rate-limit driver                         | doc 03, ADR-0009 | Before public signups |
+| Redis driver for rate limits and idempotency    | doc 03, ADR-0009 | Before public signups |
 | Email provider for takedown notifications       | A8               | Before public signups |
 | Secrets rotation                                | S13              | Phase 6               |
 | Dependency scanning and pentest                 | S14              | Phase 6               |
