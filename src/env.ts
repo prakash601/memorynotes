@@ -14,6 +14,8 @@ const envSchema = z.object({
   AUTH_GOOGLE_SECRET: z.string().min(1, "AUTH_GOOGLE_SECRET is required"),
   AUTH_GITHUB_ID: z.string().min(1, "AUTH_GITHUB_ID is required"),
   AUTH_GITHUB_SECRET: z.string().min(1, "AUTH_GITHUB_SECRET is required"),
+  /** Optional. When unset, the purge endpoint stays disabled. */
+  CRON_SECRET: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
