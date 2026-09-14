@@ -20,6 +20,7 @@ Last updated: 2026-09-14
 | --------------------------- | ------- | ---- | ---- |
 | Phase 1 - Foundation        | #1-#15  | 15   | 0    |
 | Phase 2 - Core Note Product | #16-#25 | 10   | 0    |
+| Phase 3 - Safety            | #26-#34 | 9    | 0    |
 
 ## Phase 1 - Foundation
 
@@ -60,6 +61,22 @@ Goal: the wedge works end to end: create, publish, share, read, edit.
 | 24  | Soft delete with a 30-day purge job                                    | Done   | 8c98fbd, fe85607                   |
 | 25  | Dashboard: list, open, rename, and delete notes                        | Done   | 736203e                            |
 
+## Phase 3 - Safety, privacy, and compliance
+
+Goal: the controls that make public links survivable.
+
+| #   | Issue                                                               | Status | Commit           |
+| --- | ------------------------------------------------------------------- | ------ | ---------------- |
+| 26  | Serve user content only from the share domain (ADR-0007)            | Done   | 78a5cca, b672aba |
+| 27  | Moderation on create, patch, and commit with hash matching and CSAM | Done   | b672aba          |
+| 28  | Reports: button, triage queue, SLA, takedown, and appeal            | Done   | b672aba, 78a5cca |
+| 29  | Rate limits from doc 06 with 429 and Retry-After                    | Done   | b672aba, 78a5cca |
+| 30  | Self-serve export (JSON plus markdown) and account delete           | Done   | b672aba, 78a5cca |
+| 31  | Policy pages: AUP, Terms, Privacy, and subprocessors                | Done   | 78a5cca          |
+| 32  | Edit a note from a share link in the UI                             | Done   | b672aba, 78a5cca |
+| 33  | Gate public indexing on a verified email (A5)                       | Done   | b672aba          |
+| 34  | Bump CI actions to v5                                               | Done   | 2906122          |
+
 ## Verification
 
 Run locally on 2026-09-14 against a Postgres 16.15 container.
@@ -70,9 +87,22 @@ Run locally on 2026-09-14 against a Postgres 16.15 container.
 | Types         | `npm run typecheck`                                 | pass                       |
 | Format        | `npm run format:check`                              | pass                       |
 | Migrations    | `npm run db:migrate`                                | applied to a real database |
-| Tests         | `npm test`                                          | 57 pass, 0 skipped         |
-| Build         | `npm run build`                                     | pass, 18 routes            |
+| Tests         | `npm test`                                          | 87 pass, 0 skipped         |
+| Build         | `npm run build`                                     | pass, 30 routes plus proxy |
 | Core boundary | ESLint probe importing `next/headers` in `src/core` | correctly rejected         |
+
+Phase 3 checks:
+
+| Check                  | Evidence                                                               | Result                      |
+| ---------------------- | ---------------------------------------------------------------------- | --------------------------- |
+| Content domain         | `tests/domains.test.ts`; proxy plus route-level re-check               | pass                        |
+| Moderation write paths | `tests/notes.test.ts` (create, patch, commit) and `moderation.test.ts` | blocked returns 422         |
+| Reports and takedown   | `tests/reports.test.ts`; read-page report link                         | takedown hides and notifies |
+| Rate limits            | `tests/rate-limit.test.ts`; headers observed on `POST /api/v1/reports` | 429 with Retry-After        |
+| Export and delete      | `tests/account.test.ts`                                                | purges notes and versions   |
+| Policy pages           | `/aup`, `/terms`, `/privacy`, `/subprocessors`                         | live, HTTP 200              |
+| Share-link editing     | read page emits an edit link; `getNoteView` honors the token           | pass                        |
+| Email gate (A5)        | `tests/notes.test.ts`                                                  | `email_not_verified`        |
 
 The test suite now runs in full locally because a database was available:
 `docker run -d --name mn-pg -p 5433:5432 -e POSTGRES_PASSWORD=postgres
@@ -89,8 +119,18 @@ were missing from the sanitizer allowlist.
 - Google and GitHub sign-in have still not been exercised with real provider
   credentials. The wiring type-checks and the session callback is in place, but
   "sign in works end to end" remains unproven.
-- No deployment exists yet, so the share-domain split (ADR-0007) is only
-  implemented as a configurable `SHARE_DOMAIN`, not as separate infrastructure.
+- No deployment exists yet, so the share-domain split (ADR-0007) is enforced by
+  the proxy and the read route as a configurable `SHARE_DOMAIN`, not as separate
+  infrastructure.
+- The moderation vendor is not selected. The `Moderator` seam and the built-in
+  local provider (hash matching plus blocked terms) are live, but the real
+  known-materials hash feed and vendor are required before public signups
+  (launch gate 2).
+- Rate-limit counters use the in-memory driver. Redis is the documented
+  production driver and is a drop-in behind `RateLimitStore`, but no Redis is
+  provisioned yet.
+- Takedown notifications go through the logging notifier; no email provider is
+  wired.
 
 ## Notes and deviations
 
@@ -106,20 +146,34 @@ were missing from the sanitizer allowlist.
   `.next/types` in a build, so tracking it guarantees a dirty tree.
 - `@auth/drizzle-adapter` is on 1.x and `next-auth` on 5.0.0-beta; re-check both
   when the beta ends.
+- Moderation depends on a `Moderator` seam. The built-in provider does exact
+  known-materials hash matching (the CSAM gate) plus configured blocked terms.
+  A vendor adapter replaces it without touching create, patch, or commit.
+- Takedown is a soft delete plus a link revoke, not a hard delete, so the appeal
+  path has something to review.
+- ADR-0007 is enforced in `src/proxy.ts`. Next 16 renamed the `middleware` file
+  convention to `proxy`; the read route re-checks the same rule.
+- `ADMIN_EMAILS` controls the moderation queue. With it unset, the queue is
+  empty and no account is a moderator.
+- Rate-limit numbers live in `src/core/rate-limit.ts` and use a fixed window.
+  The store is in-memory locally and Redis in production (ADR-0009).
+- The subprocessor list marks vendors that are still to be selected instead of
+  naming ones we do not use.
 
 ## Open items carried from the design docs
 
-| Item                                                         | Source           | Target        |
-| ------------------------------------------------------------ | ---------------- | ------------- |
-| Edit the note from a share link in the UI (core rule exists) | doc 12           | Phase 3       |
-| Prompt-injection hardening                                   | S11              | Phase 5       |
-| Email verification before public indexing                    | A5               | Phase 3       |
-| Moderation vendor selection                                  | A6               | Phase 3       |
-| Rate-limit numbers                                           | A6               | Phase 3       |
-| Secrets rotation                                             | S13              | Phase 6       |
-| Dependency scanning and pentest                              | S14              | Phase 6       |
-| Domain selection and DNS for the share domain                | doc 00, ADR-0007 | Before deploy |
-| Bump `actions/checkout` and `actions/setup-node` to v5       | CI warning       | Phase 3       |
+Resolved in Phase 3: share-link editing in the UI, email verification before
+public indexing (A5), rate-limit numbers (A6), and the CI action bump.
+
+| Item                                            | Source           | Target                |
+| ----------------------------------------------- | ---------------- | --------------------- |
+| Prompt-injection hardening                      | S11              | Phase 5               |
+| Moderation vendor and known-materials hash feed | A6               | Before public signups |
+| Redis rate-limit driver                         | doc 03, ADR-0009 | Before public signups |
+| Email provider for takedown notifications       | A8               | Before public signups |
+| Secrets rotation                                | S13              | Phase 6               |
+| Dependency scanning and pentest                 | S14              | Phase 6               |
+| Domain selection and DNS for the share domain   | doc 00, ADR-0007 | Before deploy         |
 
 ## How to keep this current
 
