@@ -8,16 +8,18 @@ import {
   type NoteShare,
   type NoteVersion,
 } from "@/db/schema";
-import { getEnv } from "@/env";
 import { SHARE_ACCESS_LEVELS, type ShareAccessLevel, type ShareExpiryOption } from "./constants";
 import { GoneError, NotFoundError, ValidationError } from "./errors";
 import { defaultExpiry, isExpired, resolveExpiry } from "./expiry";
 import { requireOwnedNote } from "./notes";
-import { decryptToken, encryptToken, generateShareToken, hashToken, tokenPrefix } from "./tokens";
-
-function shareSecret(): string {
-  return getEnv().AUTH_SECRET;
-}
+import {
+  decryptShareToken,
+  encryptToken,
+  generateShareToken,
+  hashToken,
+  primaryShareSecret,
+  tokenPrefix,
+} from "./tokens";
 
 function assertAccess(value: string): asserts value is ShareAccessLevel {
   if (!(SHARE_ACCESS_LEVELS as readonly string[]).includes(value)) {
@@ -56,7 +58,7 @@ export async function getShareView(
     access: share.access,
     expiresAt: share.expiresAt,
     prefix: share.tokenPrefix,
-    rawToken: decryptToken(share.tokenCiphertext, shareSecret()),
+    rawToken: decryptShareToken(share.tokenCiphertext),
   };
 }
 
@@ -68,7 +70,7 @@ export async function getOrCreateShare(
 
   const existing = await getActiveShare(db, input.noteId);
   if (existing) {
-    const rawToken = decryptToken(existing.tokenCiphertext, shareSecret());
+    const rawToken = decryptShareToken(existing.tokenCiphertext);
     if (rawToken) {
       return { share: existing, rawToken };
     }
@@ -83,7 +85,7 @@ export async function getOrCreateShare(
       noteId: input.noteId,
       access: existing?.access ?? "view",
       tokenHash: hashToken(rawToken),
-      tokenCiphertext: encryptToken(rawToken, shareSecret()),
+      tokenCiphertext: encryptToken(rawToken, primaryShareSecret()),
       tokenPrefix: tokenPrefix(rawToken),
       expiresAt,
       createdBy: input.ownerId,
@@ -155,7 +157,7 @@ export async function rotateShare(
         noteId: input.noteId,
         access: previous?.access ?? "view",
         tokenHash: hashToken(rawToken),
-        tokenCiphertext: encryptToken(rawToken, shareSecret()),
+        tokenCiphertext: encryptToken(rawToken, primaryShareSecret()),
         tokenPrefix: tokenPrefix(rawToken),
         expiresAt: stillValid ?? defaultExpiry(now),
         createdBy: input.ownerId,

@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { signOutCurrent } from "@/auth";
+import { getEnv } from "@/env";
 import { getCurrentUser } from "@/lib/session";
 import "./globals.css";
 
@@ -31,6 +32,7 @@ async function signOutAction() {
 
 export default async function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   const user = await getCurrentUser();
+  const supportEmail = getEnv().SUPPORT_EMAIL ?? null;
 
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
@@ -93,6 +95,17 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
             <Link href="/subprocessors" className="hover:text-zinc-900 dark:hover:text-zinc-100">
               Subprocessors
             </Link>
+            <Link href="/status" className="hover:text-zinc-900 dark:hover:text-zinc-100">
+              Status
+            </Link>
+            {supportEmail ? (
+              <a
+                href={`mailto:${supportEmail}`}
+                className="hover:text-zinc-900 dark:hover:text-zinc-100"
+              >
+                Support
+              </a>
+            ) : null}
           </div>
         </footer>
       </body>

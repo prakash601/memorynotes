@@ -13,7 +13,7 @@ import {
 import { getEnv } from "@/env";
 import { SOFT_DELETE_RETENTION_DAYS } from "./constants";
 import { NotFoundError } from "./errors";
-import { decryptToken } from "./tokens";
+import { decryptShareToken } from "./tokens";
 
 export interface AccountView {
   id: string;
@@ -141,7 +141,6 @@ export async function exportAccount(
     .where(and(eq(notes.ownerId, userId), isNull(notes.deletedAt)))
     .orderBy(notes.createdAt);
 
-  const secret = getEnv().AUTH_SECRET;
   const exported: ExportedNote[] = [];
 
   for (const row of rows) {
@@ -166,7 +165,7 @@ export async function exportAccount(
       updated_at: row.updatedAt,
       share: share
         ? {
-            url: shareUrl(decryptToken(share.tokenCiphertext, secret)),
+            url: shareUrl(decryptShareToken(share.tokenCiphertext)),
             access: share.access,
             prefix: share.tokenPrefix,
             expires_at: share.expiresAt,

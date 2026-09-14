@@ -4,6 +4,7 @@ import { getDb } from "@/db";
 import { getEnv } from "@/env";
 import { authenticate } from "@/lib/auth";
 import { getIdempotencyStore } from "@/lib/idempotency";
+import { observed } from "@/lib/observability";
 import { limit } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -52,7 +53,7 @@ function unauthorized(): NextResponse {
  * MCP Streamable HTTP endpoint (doc 09). JSON-RPC over POST; the tool surface is
  * the framework-free `src/core/mcp.ts`, so other platforms reuse it (ADR-0006).
  */
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
   let principal;
   try {
     principal = await authenticate(request);
@@ -135,6 +136,8 @@ export async function POST(request: Request) {
       return rpcError(id, -32601, `Method not found: ${rpc.method}`);
   }
 }
+
+export const POST = observed("mcp", handlePost);
 
 /** Streamable HTTP is POST-only here; GET (server-initiated SSE) is not used. */
 export async function GET() {

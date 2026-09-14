@@ -3,13 +3,16 @@ import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME, passesCsrfCheck } from "@/lib/csrf"
 import {
   ForbiddenError,
   RateLimitedError,
+  UnauthorizedError,
   ValidationError,
+  constantTimeEqual,
   isDomainError,
   rateLimitHeaders,
   type DomainErrorCode,
   type RateLimitState,
 } from "@/core";
 import { getEnv } from "@/env";
+import { reportError } from "@/lib/observability";
 
 const ERROR_TITLES: Record<DomainErrorCode, string> = {
   unauthorized: "Authentication required",
@@ -50,7 +53,7 @@ export function problemResponse(error: unknown): NextResponse {
     );
   }
 
-  console.error("Unhandled API error:", error);
+  reportError(error, { type: "api" });
   return NextResponse.json(
     {
       type: `${base}/errors/internal`,
@@ -114,6 +117,21 @@ export function assertCsrf(request: Request): void {
 
   if (!ok) {
     throw new ForbiddenError("Invalid or missing CSRF token");
+  }
+}
+
+/** Shared-secret guard for scheduler endpoints (purge, alerts, metrics). */
+export function assertCronSecret(request: Request): void {
+  const secret = getEnv().CRON_SECRET;
+  if (!secret) {
+    throw new UnauthorizedError("The job endpoint is not configured");
+  }
+  const header = request.headers.get("authorization") ?? "";
+  if (
+    !header.toLowerCase().startsWith("bearer ") ||
+    !constantTimeEqual(header.slice(7).trim(), secret)
+  ) {
+    throw new UnauthorizedError("Invalid job credentials");
   }
 }
 

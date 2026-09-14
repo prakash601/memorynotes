@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, lt, sql } from "drizzle-orm";
 import type { Database } from "@/db";
 import {
   noteDrafts,
@@ -408,6 +408,18 @@ export async function commitLeaseByToken(
     now: input.now,
     moderator: input.moderator,
   });
+}
+
+/**
+ * Deletes leases whose expiry has passed. Lazy checks already ignore them, so
+ * this is hygiene that keeps the table small.
+ */
+export async function purgeExpiredLeases(db: Database, now: Date = new Date()): Promise<number> {
+  const purged = await db
+    .delete(noteLeases)
+    .where(lt(noteLeases.expiresAt, now))
+    .returning({ noteId: noteLeases.noteId });
+  return purged.length;
 }
 
 /** Convenience for `append_note`: append to the draft at its current revision. */

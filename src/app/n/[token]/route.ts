@@ -5,6 +5,7 @@ import { getEnv } from "@/env";
 import { renderMarkdown } from "@/lib/markdown";
 import { limit } from "@/lib/rate-limit";
 import { clientIp, hashIp } from "@/lib/request";
+import { observed } from "@/lib/observability";
 import { getCurrentUser } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
@@ -74,7 +75,7 @@ function notice(title: string, message: string): string {
   return `<h1 class="title">${escapeHtml(title)}</h1><p class="muted">${escapeHtml(message)}</p>`;
 }
 
-export async function GET(request: Request, context: RouteContext) {
+async function handleGet(request: Request, context: RouteContext) {
   const { token } = await context.params;
   const url = new URL(request.url);
 
@@ -173,3 +174,5 @@ export async function GET(request: Request, context: RouteContext) {
     );
   }
 }
+
+export const GET = observed("read.note", handleGet);

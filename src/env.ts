@@ -26,6 +26,15 @@ const envSchema = z.object({
   MODERATION_BLOCKED_TERMS: z.string().optional(),
   /** Salt mixed into moderation hashes. Falls back to AUTH_SECRET when unset. */
   MODERATION_HASH_SALT: z.string().optional(),
+  /**
+   * Share-token encryption keys, newest first (S13). Optional; falls back to
+   * AUTH_SECRET. Adding a key rotates without breaking existing links.
+   */
+  SHARE_TOKEN_SECRETS: z.string().optional(),
+  /** Optional webhook that receives fired alerts as JSON. */
+  ALERT_WEBHOOK_URL: z.string().url().optional(),
+  /** Support contact shown on the status page and in policies. */
+  SUPPORT_EMAIL: z.string().email().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

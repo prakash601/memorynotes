@@ -83,3 +83,33 @@ export function shareUrlFromToken(rawToken: string): string {
   const base = /^https?:\/\//.test(domain) ? domain : `https://${domain}`;
   return `${base.replace(/\/$/, "")}/n/${rawToken}`;
 }
+
+/**
+ * Share-token keys, newest first (S13). Rotation adds a new key while the old
+ * one stays for decryption, so existing links and their display keep working.
+ * Falls back to the auth secret when no dedicated keys are configured.
+ */
+export function shareSecrets(): string[] {
+  const env = getEnv();
+  const configured = (env.SHARE_TOKEN_SECRETS ?? "")
+    .split(",")
+    .map((secret) => secret.trim())
+    .filter(Boolean);
+  return configured.length > 0 ? configured : [env.AUTH_SECRET];
+}
+
+/** Encryption always uses the newest key. */
+export function primaryShareSecret(): string {
+  return shareSecrets()[0];
+}
+
+/** Decryption tries every configured key, so a rotation never breaks reads. */
+export function decryptShareToken(payload: string): string | null {
+  for (const secret of shareSecrets()) {
+    const value = decryptToken(payload, secret);
+    if (value) {
+      return value;
+    }
+  }
+  return null;
+}

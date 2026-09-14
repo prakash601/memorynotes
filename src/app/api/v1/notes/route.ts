@@ -4,6 +4,7 @@ import { getDb } from "@/db";
 import { authenticate } from "@/lib/auth";
 import { applyRateLimitHeaders, assertCsrf, parseJsonBody, problemResponse } from "@/lib/http";
 import { beginIdempotency } from "@/lib/idempotency";
+import { observed } from "@/lib/observability";
 import { limit } from "@/lib/rate-limit";
 import { clientIp, hashIp } from "@/lib/request";
 import { serializeDraft, serializeNote, serializeShare } from "@/lib/serializers";
@@ -18,7 +19,7 @@ interface CreateNoteBody {
   expires_in?: ShareExpiryOption;
 }
 
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
   try {
     const principal = await authenticate(request, "notes:write");
     assertCsrf(request);
@@ -59,7 +60,7 @@ export async function POST(request: Request) {
   }
 }
 
-export async function GET(request: Request) {
+async function handleGet(request: Request) {
   try {
     const principal = await authenticate(request, "notes:read");
     const url = new URL(request.url);
@@ -93,3 +94,6 @@ export async function GET(request: Request) {
     return problemResponse(error);
   }
 }
+
+export const POST = observed("notes.create", handlePost);
+export const GET = observed("notes.list", handleGet);

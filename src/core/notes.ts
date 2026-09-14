@@ -11,7 +11,6 @@ import {
   type NoteShare,
   type NoteVersion,
 } from "@/db/schema";
-import { getEnv } from "@/env";
 import {
   NOTE_VISIBILITIES,
   SOFT_DELETE_RETENTION_DAYS,
@@ -29,17 +28,20 @@ import {
 import { defaultExpiry, resolveExpiry } from "./expiry";
 import { decodeCursor, encodeCursor, normalizeLimit } from "./cursor";
 import { runModeration, type Moderator } from "./moderation";
-import { decryptToken, encryptToken, generateShareToken, hashToken, tokenPrefix } from "./tokens";
+import {
+  decryptShareToken,
+  encryptToken,
+  generateShareToken,
+  hashToken,
+  primaryShareSecret,
+  tokenPrefix,
+} from "./tokens";
 import { assertContentSize, normalizeContent, normalizeTitle } from "./validation";
 
 function assertVisibility(value: string): asserts value is NoteVisibility {
   if (!(NOTE_VISIBILITIES as readonly string[]).includes(value)) {
     throw new ValidationError(`Unknown visibility: ${value}`);
   }
-}
-
-function shareSecret(): string {
-  return getEnv().AUTH_SECRET;
 }
 
 /** Loads a note the caller owns, or throws. Deleted notes are invisible. */
@@ -157,7 +159,7 @@ export async function createNote(db: Database, input: CreateNoteInput) {
         noteId: note.id,
         access: "view",
         tokenHash: hashToken(rawToken),
-        tokenCiphertext: encryptToken(rawToken, shareSecret()),
+        tokenCiphertext: encryptToken(rawToken, primaryShareSecret()),
         tokenPrefix: tokenPrefix(rawToken),
         expiresAt,
         createdBy: input.ownerId,
@@ -258,7 +260,7 @@ function mapNoteListRow(row: NoteListRow): NoteListItem {
             access: row.shareAccess,
             expiresAt: row.shareExpiresAt,
             prefix: row.sharePrefix,
-            rawToken: row.shareCiphertext ? decryptToken(row.shareCiphertext, shareSecret()) : null,
+            rawToken: row.shareCiphertext ? decryptShareToken(row.shareCiphertext) : null,
           }
         : null,
   };

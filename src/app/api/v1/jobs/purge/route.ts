@@ -1,33 +1,36 @@
 import { NextResponse } from "next/server";
-import { UnauthorizedError, constantTimeEqual, purgeDeletedNotes } from "@/core";
+import { purgeDeletedNotes, purgeExpiredLeases, purgeDeletedUsers } from "@/core";
 import { getDb } from "@/db";
-import { getEnv } from "@/env";
-import { problemResponse } from "@/lib/http";
+import { assertCronSecret, problemResponse } from "@/lib/http";
+import { recordJobResult } from "@/lib/observability";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Purges notes soft-deleted longer than the retention window. Intended to be
- * called by a scheduler with the shared secret; disabled when unset.
+ * Scheduled maintenance with the shared secret; disabled when unset.
+ * Purges soft-deleted notes and accounts past the window and sweeps dead leases.
  */
 export async function POST(request: Request) {
   try {
-    const secret = getEnv().CRON_SECRET;
-    if (!secret) {
-      throw new UnauthorizedError("The purge job is not configured");
-    }
-
-    const header = request.headers.get("authorization") ?? "";
-    if (!header.toLowerCase().startsWith("bearer ")) {
-      throw new UnauthorizedError("Missing purge credentials");
-    }
-    if (!constantTimeEqual(header.slice(7).trim(), secret)) {
-      throw new UnauthorizedError("Invalid purge credentials");
-    }
-
-    const purged = await purgeDeletedNotes(getDb());
-    return NextResponse.json({ purged });
+    assertCronSecret(request);
   } catch (error) {
+    return problemResponse(error);
+  }
+
+  try {
+    const db = getDb();
+    const purgedNotes = await purgeDeletedNotes(db);
+    const purgedUsers = await purgeDeletedUsers(db);
+    const purgedLeases = await purgeExpiredLeases(db);
+
+    recordJobResult("purge", true);
+    return NextResponse.json({
+      purged_notes: purgedNotes,
+      purged_users: purgedUsers,
+      purged_leases: purgedLeases,
+    });
+  } catch (error) {
+    recordJobResult("purge", false);
     return problemResponse(error);
   }
 }
