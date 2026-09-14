@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { signInWithProvider } from "@/auth";
+import { devLoginEnabled, signInWithProvider } from "@/auth";
 
 export const metadata: Metadata = {
   title: "Sign in",
@@ -31,6 +31,7 @@ type PageProps = { searchParams: Promise<{ next?: string }> };
 export default async function SignInPage({ searchParams }: PageProps) {
   const params = await searchParams;
   const next = safeNext(params.next ?? "/");
+  const showDev = devLoginEnabled();
 
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center gap-6 px-6 py-16">
@@ -54,6 +55,33 @@ export default async function SignInPage({ searchParams }: PageProps) {
           </button>
         </form>
       </div>
+
+      {showDev ? (
+        <form
+          method="get"
+          action="/api/dev-login"
+          className="flex flex-col gap-2 rounded-md border border-dashed border-amber-400 p-4 dark:border-amber-700"
+        >
+          <p className="text-xs font-medium text-amber-700 dark:text-amber-300">
+            Dev sign-in (local only, never enabled in production)
+          </p>
+          <input type="hidden" name="next" value={next} />
+          <label className="sr-only" htmlFor="dev-email">
+            Email
+          </label>
+          <input
+            id="dev-email"
+            name="email"
+            type="email"
+            defaultValue="demo@local.test"
+            placeholder="you@example.test"
+            className="h-10 rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+          />
+          <button type="submit" className={buttonClass}>
+            Sign in as this email
+          </button>
+        </form>
+      ) : null}
     </main>
   );
 }

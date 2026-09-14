@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { cookies } from "next/headers";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { signOutCurrent } from "@/auth";
 import { getEnv } from "@/env";
-import { getCurrentUser } from "@/lib/session";
+import { DEV_USER_COOKIE, getCurrentUser } from "@/lib/session";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -27,6 +28,8 @@ export const metadata: Metadata = {
 
 async function signOutAction() {
   "use server";
+  const store = await cookies();
+  store.delete(DEV_USER_COOKIE);
   await signOutCurrent();
 }
 
