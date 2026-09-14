@@ -16,6 +16,16 @@ const envSchema = z.object({
   AUTH_GITHUB_SECRET: z.string().min(1, "AUTH_GITHUB_SECRET is required"),
   /** Optional. When unset, the purge endpoint stays disabled. */
   CRON_SECRET: z.string().min(1).optional(),
+  /** Comma-separated emails allowed into the moderation triage queue. */
+  ADMIN_EMAILS: z.string().optional(),
+  /** Moderation provider name. The built-in local provider is the default. */
+  MODERATION_PROVIDER: z.string().min(1).default("local"),
+  /** Comma-separated sha256 hashes of known-materials content (CSAM gate). */
+  MODERATION_BLOCKED_HASHES: z.string().optional(),
+  /** Comma-separated substrings that always block (refused categories, A12). */
+  MODERATION_BLOCKED_TERMS: z.string().optional(),
+  /** Salt mixed into moderation hashes. Falls back to AUTH_SECRET when unset. */
+  MODERATION_HASH_SALT: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

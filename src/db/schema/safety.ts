@@ -70,3 +70,8 @@ export const activityLog = pgTable(
   },
   (t) => [index("activity_log_target_idx").on(t.targetType, t.targetId, desc(t.createdAt))],
 );
+
+export type Report = typeof reports.$inferSelect;
+export type NewReport = typeof reports.$inferInsert;
+export type ModerationEvent = typeof moderationEvents.$inferSelect;
+export type ActivityLogEntry = typeof activityLog.$inferSelect;

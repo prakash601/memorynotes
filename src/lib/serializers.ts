@@ -1,4 +1,4 @@
-import type { Note, NoteDraft, NoteShare, NoteVersion } from "@/db/schema";
+import type { Note, NoteDraft, NoteShare, NoteVersion, Report } from "@/db/schema";
 import { buildShareUrl } from "./share-url";
 
 export function serializeShare(share: NoteShare, rawToken: string | null) {
@@ -43,5 +43,19 @@ export function serializeNote(note: Note) {
     created_at: note.createdAt,
     updated_at: note.updatedAt,
     deleted_at: note.deletedAt,
+  };
+}
+
+export function serializeReport(report: Report) {
+  return {
+    id: report.id,
+    note_id: report.noteId,
+    share_id: report.shareId,
+    reason: report.reason,
+    details: report.details,
+    status: report.status,
+    resolution_note: report.resolutionNote,
+    created_at: report.createdAt,
+    updated_at: report.updatedAt,
   };
 }

@@ -19,3 +19,22 @@ export type NoteVisibility = (typeof NOTE_VISIBILITIES)[number];
 
 export const SHARE_ACCESS_LEVELS = ["view", "edit"] as const;
 export type ShareAccessLevel = (typeof SHARE_ACCESS_LEVELS)[number];
+
+/** The three write paths moderation must cover (doc 06). */
+export const MODERATION_SOURCES = ["create", "patch", "commit", "hash_match"] as const;
+export type ModerationSource = (typeof MODERATION_SOURCES)[number];
+
+/** Reasons a viewer can report a note with (doc 06). */
+export const REPORT_REASONS = [
+  "spam",
+  "phishing",
+  "illegal",
+  "harassment",
+  "doxxing",
+  "malware",
+  "other",
+] as const;
+export type ReportReason = (typeof REPORT_REASONS)[number];
+
+/** Published triage SLA, best effort (doc 06, A7). */
+export const REPORT_SLA_HOURS = { acknowledge: 24, resolve: 48 } as const;

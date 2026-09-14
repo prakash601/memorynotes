@@ -87,6 +87,28 @@ export class ContentTooLargeError extends DomainError {
   }
 }
 
+export class ModerationBlockedError extends DomainError {
+  constructor(categories: string[] = []) {
+    super("moderation_blocked", 422, "This content is not allowed", { categories });
+  }
+}
+
+/** Carries the retry delay so the transport can emit `Retry-After` (doc 09). */
+export class RateLimitedError extends DomainError {
+  readonly retryAfter: number;
+
+  constructor(retryAfter: number, details?: unknown) {
+    super("rate_limited", 429, "Too many requests", details);
+    this.retryAfter = Math.max(1, Math.ceil(retryAfter));
+  }
+}
+
+export class EmailNotVerifiedError extends DomainError {
+  constructor() {
+    super("email_not_verified", 403, "Verify your email before opting a note into public indexing");
+  }
+}
+
 export function isDomainError(value: unknown): value is DomainError {
   return value instanceof DomainError;
 }

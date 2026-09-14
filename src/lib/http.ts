@@ -1,6 +1,14 @@
 import { NextResponse } from "next/server";
 import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME, passesCsrfCheck } from "@/lib/csrf";
-import { ForbiddenError, ValidationError, isDomainError, type DomainErrorCode } from "@/core";
+import {
+  ForbiddenError,
+  RateLimitedError,
+  ValidationError,
+  isDomainError,
+  rateLimitHeaders,
+  type DomainErrorCode,
+  type RateLimitState,
+} from "@/core";
 import { getEnv } from "@/env";
 
 const ERROR_TITLES: Record<DomainErrorCode, string> = {
@@ -23,6 +31,12 @@ export function problemResponse(error: unknown): NextResponse {
   const base = getEnv().APP_URL.replace(/\/$/, "");
 
   if (isDomainError(error)) {
+    const headers: Record<string, string> = {
+      "content-type": "application/problem+json",
+    };
+    if (error instanceof RateLimitedError) {
+      headers["retry-after"] = String(error.retryAfter);
+    }
     return NextResponse.json(
       {
         type: `${base}/errors/${error.code}`,
@@ -32,7 +46,7 @@ export function problemResponse(error: unknown): NextResponse {
         code: error.code,
         ...(error.details === undefined ? {} : { errors: error.details }),
       },
-      { status: error.status, headers: { "content-type": "application/problem+json" } },
+      { status: error.status, headers },
     );
   }
 
@@ -52,6 +66,14 @@ export function problemResponse(error: unknown): NextResponse {
 export function hasBearerToken(request: Request): boolean {
   const header = request.headers.get("authorization");
   return Boolean(header && header.toLowerCase().startsWith("bearer "));
+}
+
+/** Copies the doc 09 rate-limit headers onto a successful response. */
+export function applyRateLimitHeaders(response: NextResponse, state: RateLimitState): NextResponse {
+  for (const [key, value] of Object.entries(rateLimitHeaders(state))) {
+    response.headers.set(key, value);
+  }
+  return response;
 }
 
 export function bearerToken(request: Request): string | null {

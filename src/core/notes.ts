@@ -5,6 +5,7 @@ import {
   noteShares,
   noteVersions,
   notes,
+  users,
   type Note,
   type NoteDraft,
   type NoteShare,
@@ -18,8 +19,15 @@ import {
   type ShareAccessLevel,
   type ShareExpiryOption,
 } from "./constants";
-import { ConflictRevisionError, ForbiddenError, NotFoundError, ValidationError } from "./errors";
+import {
+  ConflictRevisionError,
+  EmailNotVerifiedError,
+  ForbiddenError,
+  NotFoundError,
+  ValidationError,
+} from "./errors";
 import { defaultExpiry, resolveExpiry } from "./expiry";
+import { runModeration, type Moderator } from "./moderation";
 import { decryptToken, encryptToken, generateShareToken, hashToken, tokenPrefix } from "./tokens";
 import { assertContentSize, normalizeContent, normalizeTitle } from "./validation";
 
@@ -101,6 +109,8 @@ export interface CreateNoteInput {
   visibility?: string;
   expiresIn?: ShareExpiryOption;
   now?: Date;
+  /** Injectable moderator; defaults to the configured provider. */
+  moderator?: Moderator;
 }
 
 /**
@@ -115,6 +125,10 @@ export async function createNote(db: Database, input: CreateNoteInput) {
   const title = normalizeTitle(input.title);
   const content = normalizeContent(input.content);
   assertContentSize(content);
+
+  // Moderation is a gate on every write path (doc 06). It runs before the
+  // transaction so a slow vendor never holds a database transaction open.
+  await runModeration(db, { source: "create", title, content }, input.moderator);
 
   const expiresAt = input.expiresIn ? resolveExpiry(input.expiresIn, now) : defaultExpiry(now);
   const rawToken = generateShareToken();
@@ -165,7 +179,20 @@ export async function getOwnedNote(
   noteId: string,
   ownerId: string,
 ): Promise<OwnedNoteView> {
-  const note = await requireOwnedNote(db, noteId, ownerId);
+  return getNoteView(db, noteId, ownerId);
+}
+
+/**
+ * Loads a note for anyone allowed to edit it: the owner, or a signed-in account
+ * holding a live edit-capable link (ADR-0002).
+ */
+export async function getNoteView(
+  db: Database,
+  noteId: string,
+  userId: string,
+  shareToken?: string | null,
+): Promise<OwnedNoteView> {
+  const note = await assertCanEdit(db, { noteId, userId, shareToken });
 
   const [draft] = await db.select().from(noteDrafts).where(eq(noteDrafts.noteId, noteId)).limit(1);
 
@@ -250,6 +277,7 @@ export interface UpdateDraftInput {
   title?: string;
   content?: string;
   baseRevision: number;
+  moderator?: Moderator;
 }
 
 /**
@@ -271,6 +299,14 @@ export async function updateDraft(db: Database, input: UpdateDraftInput): Promis
   const content = input.content === undefined ? undefined : normalizeContent(input.content);
   if (content !== undefined) {
     assertContentSize(content);
+  }
+
+  if (title !== undefined || content !== undefined) {
+    await runModeration(
+      db,
+      { noteId: input.noteId, source: "patch", title, content },
+      input.moderator,
+    );
   }
 
   const [updated] = await db
@@ -305,6 +341,7 @@ export interface PublishInput {
   message?: string | null;
   baseRevision?: number;
   source?: string | null;
+  moderator?: Moderator;
 }
 
 /**
@@ -333,6 +370,12 @@ export async function publishNote(db: Database, input: PublishInput): Promise<No
     if (input.baseRevision !== undefined && input.baseRevision !== draft.revision) {
       throw new ConflictRevisionError(draft.revision);
     }
+
+    await runModeration(
+      tx,
+      { noteId: input.noteId, source: "commit", title: draft.title, content: draft.content },
+      input.moderator,
+    );
 
     const [maxRow] = await tx
       .select({ max: sql<number>`coalesce(max(${noteVersions.versionNumber}), 0)` })
@@ -368,8 +411,9 @@ export async function listVersions(
   db: Database,
   noteId: string,
   ownerId: string,
+  shareToken?: string | null,
 ): Promise<NoteVersion[]> {
-  await requireOwnedNote(db, noteId, ownerId);
+  await assertCanEdit(db, { noteId, userId: ownerId, shareToken });
   return db
     .select()
     .from(noteVersions)
@@ -382,8 +426,9 @@ export async function getVersion(
   noteId: string,
   ownerId: string,
   versionNumber: number,
+  shareToken?: string | null,
 ): Promise<NoteVersion> {
-  await requireOwnedNote(db, noteId, ownerId);
+  await assertCanEdit(db, { noteId, userId: ownerId, shareToken });
   const [version] = await db
     .select()
     .from(noteVersions)
@@ -402,10 +447,20 @@ export async function getVersion(
  */
 export async function restoreVersion(
   db: Database,
-  input: { noteId: string; userId: string; versionNumber: number },
+  input: { noteId: string; userId: string; versionNumber: number; shareToken?: string | null },
 ): Promise<{ version: NoteVersion; draft: NoteDraft }> {
-  await requireOwnedNote(db, input.noteId, input.userId);
-  const target = await getVersion(db, input.noteId, input.userId, input.versionNumber);
+  await assertCanEdit(db, {
+    noteId: input.noteId,
+    userId: input.userId,
+    shareToken: input.shareToken,
+  });
+  const target = await getVersion(
+    db,
+    input.noteId,
+    input.userId,
+    input.versionNumber,
+    input.shareToken,
+  );
 
   return db.transaction(async (tx) => {
     await tx.execute(sql`select id from notes where id = ${input.noteId} for update`);
@@ -457,6 +512,20 @@ export async function setVisibility(
 ): Promise<Note> {
   assertVisibility(input.visibility);
   await requireOwnedNote(db, input.noteId, input.ownerId);
+
+  // A5: a verified email is required before a note is opted into public
+  // indexing. OAuth providers supply a verified email, so this only bites
+  // accounts that signed up without one.
+  if (input.visibility === "public") {
+    const [owner] = await db
+      .select({ emailVerified: users.emailVerified })
+      .from(users)
+      .where(eq(users.id, input.ownerId))
+      .limit(1);
+    if (!owner?.emailVerified) {
+      throw new EmailNotVerifiedError();
+    }
+  }
 
   const [updated] = await db
     .update(notes)
