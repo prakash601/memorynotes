@@ -17,6 +17,7 @@ export const noteShares = pgTable(
       .references(() => notes.id, { onDelete: "cascade" }),
     access: shareAccess("access").notNull().default("view"),
     tokenHash: text("token_hash").notNull(),
+    tokenCiphertext: text("token_ciphertext").notNull(),
     tokenPrefix: text("token_prefix").notNull(),
     slug: text("slug"),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
