@@ -7,7 +7,7 @@ path (doc 06, A3/A7/A8, launch gate 2).
 
 - Acknowledge: 24 hours.
 - Resolve: 48 hours.
-Best effort, stated in the Acceptable Use Policy.
+  Best effort, stated in the Acceptable Use Policy.
 
 ## Triage
 

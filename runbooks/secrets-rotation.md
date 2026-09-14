@@ -5,13 +5,13 @@ exposure. Never commit a secret; everything loads from the environment.
 
 ## Secrets
 
-| Secret | Effect of rotation |
-|--------|--------------------|
-| `AUTH_SECRET` | Invalidates sessions. Share-token encryption falls back to it when `SHARE_TOKEN_SECRETS` is unset. |
-| `SHARE_TOKEN_SECRETS` | Rotation key for share-token display. Newest first. |
-| `AUTH_GOOGLE_SECRET`, `AUTH_GITHUB_SECRET` | OAuth sign-in until the provider secret is updated. |
-| `DATABASE_URL` | Connection credentials; rotate in the provider first. |
-| `CRON_SECRET` | The scheduled job endpoints stop until the scheduler is updated. |
+| Secret                                     | Effect of rotation                                                                                 |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| `AUTH_SECRET`                              | Invalidates sessions. Share-token encryption falls back to it when `SHARE_TOKEN_SECRETS` is unset. |
+| `SHARE_TOKEN_SECRETS`                      | Rotation key for share-token display. Newest first.                                                |
+| `AUTH_GOOGLE_SECRET`, `AUTH_GITHUB_SECRET` | OAuth sign-in until the provider secret is updated.                                                |
+| `DATABASE_URL`                             | Connection credentials; rotate in the provider first.                                              |
+| `CRON_SECRET`                              | The scheduled job endpoints stop until the scheduler is updated.                                   |
 
 ## Share-token keys (non-breaking)
 

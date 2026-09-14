@@ -5,11 +5,11 @@ and stated honestly in the policy (doc 06, A10).
 
 ## Severity
 
-| Level | Meaning | Response target |
-|-------|---------|-----------------|
-| SEV1 | Public read or create is down, or data is at risk | Immediate |
-| SEV2 | A major feature is degraded (MCP, sharing, jobs) | Same day |
-| SEV3 | Minor degradation or a single-account issue | Next business day |
+| Level | Meaning                                           | Response target   |
+| ----- | ------------------------------------------------- | ----------------- |
+| SEV1  | Public read or create is down, or data is at risk | Immediate         |
+| SEV2  | A major feature is degraded (MCP, sharing, jobs)  | Same day          |
+| SEV3  | Minor degradation or a single-account issue       | Next business day |
 
 ## First 15 minutes
 
