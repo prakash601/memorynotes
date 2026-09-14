@@ -41,6 +41,21 @@ export default async function SettingsPage({ searchParams }: PageProps) {
         </section>
 
         <section className="flex flex-col gap-2 border-t border-zinc-200 pt-6 dark:border-zinc-800">
+          <h2 className="text-sm font-medium">API tokens</h2>
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            Create scoped tokens for scripts and agents. The raw value is shown once.
+          </p>
+          <div>
+            <Link
+              href="/settings/tokens"
+              className="h-9 inline-flex items-center rounded-md border border-zinc-300 px-4 text-sm text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              Manage tokens
+            </Link>
+          </div>
+        </section>
+
+        <section className="flex flex-col gap-2 border-t border-zinc-200 pt-6 dark:border-zinc-800">
           <h2 className="text-sm font-medium">Export your data</h2>
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
             Download every note with its draft, link, and full version history.
