@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
-import { createNote, listNotes, type ShareExpiryOption } from "@/core";
+import { createNote, listNotesPage, type ShareExpiryOption } from "@/core";
 import { getDb } from "@/db";
-import { applyRateLimitHeaders, assertCsrf, problemResponse, readJsonBody } from "@/lib/http";
+import { authenticate } from "@/lib/auth";
+import { applyRateLimitHeaders, assertCsrf, parseJsonBody, problemResponse } from "@/lib/http";
+import { beginIdempotency } from "@/lib/idempotency";
 import { limit } from "@/lib/rate-limit";
 import { clientIp, hashIp } from "@/lib/request";
 import { serializeDraft, serializeNote, serializeShare } from "@/lib/serializers";
 import { buildShareUrl } from "@/lib/share-url";
-import { requireUser } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
@@ -19,48 +20,57 @@ interface CreateNoteBody {
 
 export async function POST(request: Request) {
   try {
-    const user = await requireUser();
+    const principal = await authenticate(request, "notes:write");
     assertCsrf(request);
 
+    const text = await request.text();
+    const body = parseJsonBody<CreateNoteBody>(text);
+    const idempotency = await beginIdempotency(request, principal, text);
+    if (idempotency.replay) {
+      return idempotency.replay;
+    }
+
     // Doc 06: 50 creates/day/account and 200/day/IP.
-    const accountState = await limit("note_create_account", user.id);
+    const accountState = await limit("note_create_account", principal.userId);
     const ipState = await limit("note_create_ip", hashIp(clientIp(request)));
     const state = accountState.remaining <= ipState.remaining ? accountState : ipState;
 
-    const body = await readJsonBody<CreateNoteBody>(request);
-
     const { note, draft, share, rawToken } = await createNote(getDb(), {
-      ownerId: user.id,
+      ownerId: principal.userId,
       title: body.title,
       content: body.content,
       visibility: body.visibility,
       expiresIn: body.expires_in,
     });
 
-    return applyRateLimitHeaders(
-      NextResponse.json(
-        {
-          ...serializeNote(note),
-          draft: serializeDraft(draft),
-          share: serializeShare(share, rawToken),
-          published_version: null,
-        },
-        { status: 201 },
-      ),
-      state,
+    const response = NextResponse.json(
+      {
+        ...serializeNote(note),
+        draft: serializeDraft(draft),
+        share: serializeShare(share, rawToken),
+        published_version: null,
+      },
+      { status: 201 },
     );
+
+    return idempotency.complete(applyRateLimitHeaders(response, state));
   } catch (error) {
     return problemResponse(error);
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const user = await requireUser();
-    const items = await listNotes(getDb(), user.id);
+    const principal = await authenticate(request, "notes:read");
+    const url = new URL(request.url);
+    const limitParam = url.searchParams.get("limit");
+    const page = await listNotesPage(getDb(), principal.userId, {
+      limit: limitParam ? Number(limitParam) : undefined,
+      cursor: url.searchParams.get("cursor"),
+    });
 
     return NextResponse.json({
-      data: items.map((item) => ({
+      data: page.data.map((item) => ({
         id: item.id,
         title: item.title,
         visibility: item.visibility,
@@ -77,7 +87,7 @@ export async function GET() {
               }
             : null,
       })),
-      next_cursor: null,
+      next_cursor: page.nextCursor,
     });
   } catch (error) {
     return problemResponse(error);

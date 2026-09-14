@@ -1,20 +1,21 @@
 import { NextResponse } from "next/server";
 import { exportAccount } from "@/core";
 import { getDb } from "@/db";
+import { authenticate } from "@/lib/auth";
 import { assertCsrf, problemResponse } from "@/lib/http";
-import { requireUser } from "@/lib/session";
+import { beginIdempotency } from "@/lib/idempotency";
 
 export const dynamic = "force-dynamic";
 
 /**
  * Doc 09 specifies POST /me/export. GET is added so the settings page can offer
- * a plain download link: it is a safe, session-authenticated read.
+ * a plain download link: it is a safe, read-only operation.
  */
 export async function GET(request: Request) {
   try {
-    const user = await requireUser();
+    const principal = await authenticate(request, "account:read");
     const format = new URL(request.url).searchParams.get("format");
-    const exported = await exportAccount(getDb(), user.id);
+    const exported = await exportAccount(getDb(), principal.userId);
 
     if (format === "markdown") {
       return new NextResponse(exported.markdown, {
@@ -36,13 +37,18 @@ export async function GET(request: Request) {
   }
 }
 
-/** Export every note as JSON plus markdown (P5). */
 export async function POST(request: Request) {
   try {
-    const user = await requireUser();
+    const principal = await authenticate(request, "account:read");
     assertCsrf(request);
-    const exported = await exportAccount(getDb(), user.id);
-    return NextResponse.json(exported);
+
+    const idempotency = await beginIdempotency(request, principal, "");
+    if (idempotency.replay) {
+      return idempotency.replay;
+    }
+
+    const exported = await exportAccount(getDb(), principal.userId);
+    return idempotency.complete(NextResponse.json(exported));
   } catch (error) {
     return problemResponse(error);
   }

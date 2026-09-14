@@ -1,23 +1,29 @@
 import { NextResponse } from "next/server";
-import { listVersions } from "@/core";
+import { listVersionsPage } from "@/core";
 import { getDb } from "@/db";
+import { authenticate } from "@/lib/auth";
 import { problemResponse } from "@/lib/http";
 import { serializeVersionSummary } from "@/lib/serializers";
-import { requireUser } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
   try {
-    const user = await requireUser();
+    const principal = await authenticate(request, "notes:read");
     const { id } = await context.params;
-    const versions = await listVersions(getDb(), id, user.id);
+    const url = new URL(request.url);
+    const limitParam = url.searchParams.get("limit");
+
+    const page = await listVersionsPage(getDb(), id, principal.userId, {
+      limit: limitParam ? Number(limitParam) : undefined,
+      cursor: url.searchParams.get("cursor"),
+    });
 
     return NextResponse.json({
-      data: versions.map(serializeVersionSummary),
-      next_cursor: null,
+      data: page.data.map(serializeVersionSummary),
+      next_cursor: page.nextCursor,
     });
   } catch (error) {
     return problemResponse(error);

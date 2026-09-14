@@ -1,15 +1,17 @@
 import { NextResponse } from "next/server";
 import { NotFoundError, deleteAccount, getAccount } from "@/core";
 import { getDb } from "@/db";
+import { UnauthorizedError } from "@/core";
+import { authenticate } from "@/lib/auth";
 import { assertCsrf, problemResponse } from "@/lib/http";
-import { requireUser } from "@/lib/session";
+import { getCurrentUser } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const user = await requireUser();
-    const account = await getAccount(getDb(), user.id);
+    const principal = await authenticate(request, "account:read");
+    const account = await getAccount(getDb(), principal.userId);
     if (!account) {
       throw new NotFoundError("Account not found");
     }
@@ -19,12 +21,19 @@ export async function GET() {
   }
 }
 
-/** Self-serve delete (P5): purges content and versions immediately. */
+/**
+ * Self-serve delete (P5). Deliberately session-only: a leaked API token must not
+ * be able to destroy an account. This is a documented deviation from doc 09.
+ */
 export async function DELETE(request: Request) {
   try {
-    const user = await requireUser();
+    const viewer = await getCurrentUser();
+    if (!viewer) {
+      throw new UnauthorizedError("Deleting an account requires a signed-in session");
+    }
     assertCsrf(request);
-    const result = await deleteAccount(getDb(), user.id);
+
+    const result = await deleteAccount(getDb(), viewer.id);
     return NextResponse.json({
       deleted_at: result.deletedAt,
       purged_notes: result.purgedNotes,
