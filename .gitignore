@@ -23,6 +23,9 @@ pnpm-debug.log*
 # Testing and coverage
 coverage/
 
+# TypeScript incremental build info
+*.tsbuildinfo
+
 # Editors and OS
 .DS_Store
 .idea/
