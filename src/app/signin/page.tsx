@@ -5,20 +5,33 @@ export const metadata: Metadata = {
   title: "Sign in",
 };
 
-async function signInWithGoogle() {
-  "use server";
-  await signInWithProvider("google");
+/** Only same-origin relative paths are accepted, so `next` cannot be an open redirect. */
+function safeNext(value: string): string {
+  if (value.startsWith("/") && !value.startsWith("//")) {
+    return value;
+  }
+  return "/";
 }
 
-async function signInWithGitHub() {
+async function signInWithGoogle(formData: FormData) {
   "use server";
-  await signInWithProvider("github");
+  await signInWithProvider("google", safeNext(String(formData.get("next") ?? "/")));
+}
+
+async function signInWithGitHub(formData: FormData) {
+  "use server";
+  await signInWithProvider("github", safeNext(String(formData.get("next") ?? "/")));
 }
 
 const buttonClass =
   "flex h-11 w-full items-center justify-center rounded-md border border-zinc-300 bg-white px-4 text-sm font-medium text-zinc-900 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800";
 
-export default function SignInPage() {
+type PageProps = { searchParams: Promise<{ next?: string }> };
+
+export default async function SignInPage({ searchParams }: PageProps) {
+  const params = await searchParams;
+  const next = safeNext(params.next ?? "/");
+
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center gap-6 px-6 py-16">
       <div>
@@ -29,11 +42,13 @@ export default function SignInPage() {
       </div>
       <div className="flex flex-col gap-3">
         <form action={signInWithGoogle}>
+          <input type="hidden" name="next" value={next} />
           <button type="submit" className={buttonClass}>
             Continue with Google
           </button>
         </form>
         <form action={signInWithGitHub}>
+          <input type="hidden" name="next" value={next} />
           <button type="submit" className={buttonClass}>
             Continue with GitHub
           </button>

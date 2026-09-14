@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { getAccount } from "@/core";
+import { getAccount, listConsents } from "@/core";
 import { getDb } from "@/db";
 import { requireUserOrRedirect } from "@/lib/guard";
-import { deleteAccountAction } from "./actions";
+import { deleteAccountAction, revokeAppAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +18,7 @@ type PageProps = { searchParams: Promise<{ error?: string }> };
 export default async function SettingsPage({ searchParams }: PageProps) {
   const user = await requireUserOrRedirect();
   const account = await getAccount(getDb(), user.id);
+  const connectedApps = await listConsents(getDb(), user.id);
   const params = await searchParams;
 
   return (
@@ -53,6 +54,33 @@ export default async function SettingsPage({ searchParams }: PageProps) {
               Manage tokens
             </Link>
           </div>
+        </section>
+
+        <section className="flex flex-col gap-3 border-t border-zinc-200 pt-6 dark:border-zinc-800">
+          <h2 className="text-sm font-medium">Connected apps</h2>
+          {connectedApps.length === 0 ? (
+            <p className="text-sm text-zinc-500">No apps are connected.</p>
+          ) : (
+            <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
+              {connectedApps.map((app) => (
+                <li key={app.clientId} className="flex items-start justify-between gap-3 py-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{app.clientName}</p>
+                    <p className="text-xs text-zinc-500">{app.scopes.join(", ")}</p>
+                  </div>
+                  <form action={revokeAppAction}>
+                    <input type="hidden" name="clientId" value={app.clientId} />
+                    <button
+                      type="submit"
+                      className="h-8 shrink-0 rounded-md border border-zinc-300 px-3 text-xs text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                    >
+                      Revoke
+                    </button>
+                  </form>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
 
         <section className="flex flex-col gap-2 border-t border-zinc-200 pt-6 dark:border-zinc-800">
