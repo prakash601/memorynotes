@@ -6,6 +6,7 @@ import {
   noteLeases,
   noteVersions,
   notes,
+  type NoteDraft,
   type NoteLease,
   type NoteVersion,
 } from "@/db/schema";
@@ -18,7 +19,7 @@ import {
   ValidationError,
 } from "./errors";
 import { runModeration, type Moderator } from "./moderation";
-import { requireOwnedNote } from "./notes";
+import { requireOwnedNote, assertCanEdit, updateDraft } from "./notes";
 import { hashToken } from "./tokens";
 import { assertContentSize, normalizeContent, normalizeTitle } from "./validation";
 
@@ -293,4 +294,145 @@ export async function forceReleaseLease(
 ): Promise<void> {
   await requireOwnedNote(db, input.noteId, input.ownerId);
   await db.delete(noteLeases).where(eq(noteLeases.noteId, input.noteId));
+}
+
+/** The MCP tools address a lease by its token alone, with no note id. */
+export async function getLeaseByToken(
+  db: Database,
+  leaseToken: string,
+  now: Date = new Date(),
+): Promise<NoteLease | null> {
+  const [lease] = await db
+    .select()
+    .from(noteLeases)
+    .where(eq(noteLeases.tokenHash, hashToken(leaseToken)))
+    .limit(1);
+  if (!lease || lease.expiresAt.getTime() <= now.getTime()) {
+    return null;
+  }
+  return lease;
+}
+
+export async function requireLeaseByToken(
+  db: Database,
+  leaseToken: string,
+  now: Date = new Date(),
+): Promise<NoteLease> {
+  const lease = await getLeaseByToken(db, leaseToken, now);
+  if (!lease) {
+    throw new LeaseExpiredError();
+  }
+  return lease;
+}
+
+export async function heartbeatLeaseByToken(
+  db: Database,
+  input: { leaseToken: string; ttlSeconds?: number; now?: Date },
+): Promise<NoteLease> {
+  const lease = await requireLeaseByToken(db, input.leaseToken, input.now);
+  return heartbeatLease(db, {
+    noteId: lease.noteId,
+    leaseToken: input.leaseToken,
+    ttlSeconds: input.ttlSeconds,
+    now: input.now,
+  });
+}
+
+export async function abortLeaseByToken(db: Database, leaseToken: string): Promise<void> {
+  await db.delete(noteLeases).where(eq(noteLeases.tokenHash, hashToken(leaseToken)));
+}
+
+export interface AppendStagingResult {
+  noteId: string;
+  stagedLength: number;
+  expiresAt: Date;
+}
+
+/**
+ * Appends to the lease's staged copy. The draft is untouched until commit, so a
+ * killed agent leaves the note exactly as it was (ADR-0004).
+ */
+export async function appendLeaseStaging(
+  db: Database,
+  input: { leaseToken: string; content: string; title?: string; now?: Date },
+): Promise<AppendStagingResult> {
+  const now = input.now ?? new Date();
+  const lease = await requireLeaseByToken(db, input.leaseToken, now);
+
+  const [draft] = await db
+    .select()
+    .from(noteDrafts)
+    .where(eq(noteDrafts.noteId, lease.noteId))
+    .limit(1);
+  if (!draft) {
+    throw new NotFoundError("Draft not found");
+  }
+
+  const nextContent = `${lease.stagedContent ?? draft.content}${input.content}`;
+  assertContentSize(nextContent);
+  const nextTitle =
+    input.title === undefined
+      ? lease.stagedTitle
+      : `${lease.stagedTitle ?? draft.title}${input.title}`;
+
+  await db
+    .update(noteLeases)
+    .set({ stagedContent: nextContent, stagedTitle: nextTitle ?? null })
+    .where(eq(noteLeases.noteId, lease.noteId));
+
+  return { noteId: lease.noteId, stagedLength: nextContent.length, expiresAt: lease.expiresAt };
+}
+
+export interface CommitByTokenInput {
+  leaseToken: string;
+  mode: LeaseCommitMode;
+  title?: string;
+  content?: string;
+  message?: string | null;
+  now?: Date;
+  moderator?: Moderator;
+}
+
+export async function commitLeaseByToken(
+  db: Database,
+  input: CommitByTokenInput,
+): Promise<CommitLeaseResult> {
+  const lease = await requireLeaseByToken(db, input.leaseToken, input.now);
+  return commitLease(db, {
+    noteId: lease.noteId,
+    leaseToken: input.leaseToken,
+    mode: input.mode,
+    title: input.title,
+    content: input.content,
+    message: input.message,
+    now: input.now,
+    moderator: input.moderator,
+  });
+}
+
+/** Convenience for `append_note`: append to the draft at its current revision. */
+export async function appendToDraft(
+  db: Database,
+  input: { noteId: string; userId: string; content: string; shareToken?: string | null },
+): Promise<NoteDraft> {
+  await assertCanEdit(db, {
+    noteId: input.noteId,
+    userId: input.userId,
+    shareToken: input.shareToken,
+  });
+  const [draft] = await db
+    .select()
+    .from(noteDrafts)
+    .where(eq(noteDrafts.noteId, input.noteId))
+    .limit(1);
+  if (!draft) {
+    throw new NotFoundError("Draft not found");
+  }
+  return updateDraft(db, {
+    noteId: input.noteId,
+    userId: input.userId,
+    shareToken: input.shareToken,
+    content: `${draft.content}${input.content}`,
+    baseRevision: draft.revision,
+  });
 }

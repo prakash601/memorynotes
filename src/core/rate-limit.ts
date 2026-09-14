@@ -24,6 +24,8 @@ export const RATE_LIMITS = {
   mcp_create_hour: { name: "mcp_create_hour", limit: 20, windowSeconds: 3_600 },
   read_ip_minute: { name: "read_ip_minute", limit: 1_000, windowSeconds: 60 },
   report_ip_hour: { name: "report_ip_hour", limit: 20, windowSeconds: 3_600 },
+  oauth_register_hour: { name: "oauth_register_hour", limit: 10, windowSeconds: 3_600 },
+  oauth_token_minute: { name: "oauth_token_minute", limit: 60, windowSeconds: 60 },
 } as const satisfies Record<string, RateLimitPolicy>;
 
 export type RateLimitPolicyName = keyof typeof RATE_LIMITS;

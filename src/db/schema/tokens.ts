@@ -38,9 +38,6 @@ export const apiTokens = pgTable(
   ],
 );
 
-export type ApiToken = typeof apiTokens.$inferSelect;
-export type NewApiToken = typeof apiTokens.$inferInsert;
-
 /** Registered OAuth clients. Multiple platforms, not just ChatGPT (ADR-0006). */
 export const oauthClients = pgTable("oauth_clients", {
   id: text("id").primaryKey(),
@@ -119,3 +116,12 @@ export const oauthConsents = pgTable(
   },
   (t) => [primaryKey({ columns: [t.userId, t.clientId] })],
 );
+
+export type ApiToken = typeof apiTokens.$inferSelect;
+export type NewApiToken = typeof apiTokens.$inferInsert;
+export type OAuthClient = typeof oauthClients.$inferSelect;
+export type NewOAuthClient = typeof oauthClients.$inferInsert;
+export type OAuthAuthorizationCode = typeof oauthAuthorizationCodes.$inferSelect;
+export type OAuthToken = typeof oauthTokens.$inferSelect;
+export type NewOAuthToken = typeof oauthTokens.$inferInsert;
+export type OAuthConsent = typeof oauthConsents.$inferSelect;

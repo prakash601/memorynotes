@@ -5,6 +5,7 @@ import {
   randomBytes,
   timingSafeEqual,
 } from "node:crypto";
+import { getEnv } from "@/env";
 
 /** 16 random bytes, base64url encoded (22 characters). Per doc 03. */
 const SHARE_TOKEN_BYTES = 16;
@@ -74,4 +75,11 @@ export function decryptToken(payload: string, secret: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** Public read URL for a raw share token, used by API and MCP responses. */
+export function shareUrlFromToken(rawToken: string): string {
+  const domain = getEnv().SHARE_DOMAIN;
+  const base = /^https?:\/\//.test(domain) ? domain : `https://${domain}`;
+  return `${base.replace(/\/$/, "")}/n/${rawToken}`;
 }
