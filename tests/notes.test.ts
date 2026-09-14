@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, expect, it } from "vitest";
 import {
+  createFixedModerator,
   createNote,
   getOwnedNote,
   hashToken,
@@ -7,6 +8,7 @@ import {
   publishNote,
   purgeDeletedNotes,
   restoreVersion,
+  setVisibility,
   softDeleteNote,
   updateDraft,
 } from "@/core";
@@ -185,5 +187,69 @@ describeWithDatabase("notes service", () => {
     expect(mine).toHaveLength(1);
     expect(mine[0].title).toBe("Mine");
     expect(mine[0].share?.rawToken).toHaveLength(22);
+  });
+
+  it("blocks a create when moderation blocks, and writes nothing", async () => {
+    const userId = await createTestUser(sql);
+    const moderator = createFixedModerator({ result: "block", categories: ["hash_match"] });
+
+    await expect(
+      createNote(db, { ownerId: userId, content: "bad", moderator }),
+    ).rejects.toMatchObject({ code: "moderation_blocked", status: 422 });
+
+    const [counts] = await sql<{ notes: number }[]>`
+      select count(*)::int as notes from notes
+    `;
+    expect(counts.notes).toBe(0);
+  });
+
+  it("blocks a patch when moderation blocks, and leaves the draft unchanged", async () => {
+    const { userId, note, draft } = await seed();
+    const moderator = createFixedModerator({ result: "block" });
+
+    await expect(
+      updateDraft(db, {
+        noteId: note.id,
+        userId,
+        content: "bad",
+        baseRevision: draft.revision,
+        moderator,
+      }),
+    ).rejects.toMatchObject({ code: "moderation_blocked" });
+
+    const [row] = await sql<{ content: string; revision: number }[]>`
+      select content, revision from note_drafts where note_id = ${note.id}
+    `;
+    expect(row).toEqual({ content: "# Hello world", revision: 1 });
+  });
+
+  it("blocks a commit when moderation blocks, and creates no version", async () => {
+    const { userId, note } = await seed();
+    const moderator = createFixedModerator({ result: "block" });
+
+    await expect(publishNote(db, { noteId: note.id, userId, moderator })).rejects.toMatchObject({
+      code: "moderation_blocked",
+    });
+
+    const [row] = await sql<{ count: number }[]>`
+      select count(*)::int as count from note_versions
+    `;
+    expect(row.count).toBe(0);
+  });
+
+  it("requires a verified email before a note can be public", async () => {
+    const { userId, note } = await seed();
+
+    await expect(
+      setVisibility(db, { noteId: note.id, ownerId: userId, visibility: "public" }),
+    ).rejects.toMatchObject({ code: "email_not_verified", status: 403 });
+
+    await sql`update users set email_verified = now() where id = ${userId}`;
+    const updated = await setVisibility(db, {
+      noteId: note.id,
+      ownerId: userId,
+      visibility: "public",
+    });
+    expect(updated.visibility).toBe("public");
   });
 });
