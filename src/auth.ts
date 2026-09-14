@@ -26,6 +26,15 @@ export function getAuth(): ReturnType<typeof NextAuth> {
       providers: [Google, GitHub],
       pages: { signIn: "/signin" },
       trustHost: true,
+      callbacks: {
+        session({ session, user }) {
+          // Database sessions carry the account row; expose its id to callers.
+          if (user) {
+            session.user.id = user.id;
+          }
+          return session;
+        },
+      },
     });
   }
   return instance;
