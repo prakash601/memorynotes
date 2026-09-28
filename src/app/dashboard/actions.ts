@@ -6,6 +6,9 @@ import {
   createNote,
   getOwnedNote,
   rotateShare,
+  setFavorite,
+  setNoteTags,
+  setPinned,
   setVisibility,
   softDeleteNote,
   updateDraft,
@@ -77,5 +80,37 @@ export async function setExpiryAction(formData: FormData): Promise<void> {
     ownerId: user.id,
     expiresIn,
   });
+  revalidatePath("/dashboard");
+}
+
+export async function toggleFavoriteAction(formData: FormData): Promise<void> {
+  const user = await requireUserOrRedirect();
+  const noteId = String(formData.get("noteId") ?? "");
+  const view = await getOwnedNote(getDb(), noteId, user.id);
+  await setFavorite(getDb(), {
+    noteId,
+    ownerId: user.id,
+    favorite: !view.note.isFavorite,
+  });
+  revalidatePath("/dashboard");
+}
+
+export async function togglePinnedAction(formData: FormData): Promise<void> {
+  const user = await requireUserOrRedirect();
+  const noteId = String(formData.get("noteId") ?? "");
+  const view = await getOwnedNote(getDb(), noteId, user.id);
+  await setPinned(getDb(), { noteId, ownerId: user.id, pinned: !view.note.isPinned });
+  revalidatePath("/dashboard");
+}
+
+export async function setTagsAction(formData: FormData): Promise<void> {
+  const user = await requireUserOrRedirect();
+  const noteId = String(formData.get("noteId") ?? "");
+  const raw = String(formData.get("tags") ?? "");
+  const tags = raw
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+  await setNoteTags(getDb(), { noteId, ownerId: user.id, tags });
   revalidatePath("/dashboard");
 }

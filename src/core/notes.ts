@@ -1,8 +1,9 @@
-import { and, desc, eq, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import type { Database } from "@/db";
 import {
   noteDrafts,
   noteShares,
+  noteTags,
   noteVersions,
   notes,
   users,
@@ -224,6 +225,9 @@ export interface NoteListItem {
   visibility: NoteVisibility;
   revision: number;
   updatedAt: Date;
+  isFavorite: boolean;
+  isPinned: boolean;
+  tags: string[];
   publishedVersionNumber: number | null;
   share: {
     access: ShareAccessLevel;
@@ -239,6 +243,8 @@ interface NoteListRow {
   title: string;
   revision: number;
   updatedAt: Date;
+  isFavorite: boolean;
+  isPinned: boolean;
   publishedVersionNumber: number | null;
   shareAccess: ShareAccessLevel | null;
   shareExpiresAt: Date | null;
@@ -253,6 +259,9 @@ function mapNoteListRow(row: NoteListRow): NoteListItem {
     visibility: row.visibility,
     revision: row.revision,
     updatedAt: row.updatedAt,
+    isFavorite: row.isFavorite,
+    isPinned: row.isPinned,
+    tags: [],
     publishedVersionNumber: row.publishedVersionNumber ?? null,
     share:
       row.sharePrefix && row.shareAccess
@@ -272,6 +281,8 @@ const NOTE_LIST_COLUMNS = {
   title: noteDrafts.title,
   revision: noteDrafts.revision,
   updatedAt: noteDrafts.updatedAt,
+  isFavorite: notes.isFavorite,
+  isPinned: notes.isPinned,
   publishedVersionNumber: noteVersions.versionNumber,
   shareAccess: noteShares.access,
   shareExpiresAt: noteShares.expiresAt,
@@ -279,17 +290,175 @@ const NOTE_LIST_COLUMNS = {
   shareCiphertext: noteShares.tokenCiphertext,
 };
 
-export async function listNotes(db: Database, ownerId: string): Promise<NoteListItem[]> {
+export const MAX_TAGS_PER_NOTE = 20;
+export const MAX_TAG_LENGTH = 50;
+
+export function normalizeTag(tag: string): string {
+  const value = tag.trim().toLowerCase();
+  if (!value) {
+    throw new ValidationError("Tag must not be empty");
+  }
+  if (value.length > MAX_TAG_LENGTH) {
+    throw new ValidationError(`Tag must be ${MAX_TAG_LENGTH} characters or fewer`);
+  }
+  if (!/^[a-z0-9][a-z0-9-_]*$/.test(value)) {
+    throw new ValidationError(
+      "Tag may contain lowercase letters, numbers, hyphens, and underscores",
+    );
+  }
+  return value;
+}
+
+function normalizeTagList(tags: string[] | undefined | null): string[] {
+  const out: string[] = [];
+  for (const tag of tags ?? []) {
+    const value = normalizeTag(tag);
+    if (!out.includes(value)) {
+      out.push(value);
+    }
+  }
+  if (out.length > MAX_TAGS_PER_NOTE) {
+    throw new ValidationError(`At most ${MAX_TAGS_PER_NOTE} tags per note`);
+  }
+  return out;
+}
+
+function escapeLike(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
+/** Replace every tag on a note the caller owns. Returns the normalized tags. */
+export async function setNoteTags(
+  db: Database,
+  input: { noteId: string; ownerId: string; tags: string[] },
+): Promise<string[]> {
+  await requireOwnedNote(db, input.noteId, input.ownerId);
+  const tags = normalizeTagList(input.tags);
+  await db.transaction(async (tx) => {
+    await tx.delete(noteTags).where(eq(noteTags.noteId, input.noteId));
+    if (tags.length > 0) {
+      await tx.insert(noteTags).values(tags.map((tag) => ({ noteId: input.noteId, tag })));
+    }
+  });
+  return tags;
+}
+
+export async function listNoteTags(
+  db: Database,
+  noteId: string,
+  ownerId: string,
+): Promise<string[]> {
+  await requireOwnedNote(db, noteId, ownerId);
+  const rows = await db
+    .select({ tag: noteTags.tag })
+    .from(noteTags)
+    .where(eq(noteTags.noteId, noteId))
+    .orderBy(noteTags.tag);
+  return rows.map((row) => row.tag);
+}
+
+export async function listOwnedTags(db: Database, ownerId: string): Promise<string[]> {
+  const rows = await db
+    .selectDistinct({ tag: noteTags.tag })
+    .from(noteTags)
+    .innerJoin(notes, eq(notes.id, noteTags.noteId))
+    .where(and(eq(notes.ownerId, ownerId), isNull(notes.deletedAt)))
+    .orderBy(noteTags.tag);
+  return rows.map((row) => row.tag);
+}
+
+export async function setFavorite(
+  db: Database,
+  input: { noteId: string; ownerId: string; favorite: boolean },
+): Promise<Note> {
+  await requireOwnedNote(db, input.noteId, input.ownerId);
+  const [updated] = await db
+    .update(notes)
+    .set({ isFavorite: input.favorite, updatedAt: new Date() })
+    .where(eq(notes.id, input.noteId))
+    .returning();
+  return updated;
+}
+
+export async function setPinned(
+  db: Database,
+  input: { noteId: string; ownerId: string; pinned: boolean },
+): Promise<Note> {
+  await requireOwnedNote(db, input.noteId, input.ownerId);
+  const [updated] = await db
+    .update(notes)
+    .set({ isPinned: input.pinned, updatedAt: new Date() })
+    .where(eq(notes.id, input.noteId))
+    .returning();
+  return updated;
+}
+
+async function attachTags(db: Database, items: NoteListItem[]): Promise<NoteListItem[]> {
+  if (items.length === 0) {
+    return items;
+  }
+  const ids = items.map((item) => item.id);
+  const rows = await db
+    .select({ noteId: noteTags.noteId, tag: noteTags.tag })
+    .from(noteTags)
+    // Drizzle's typed inArray carries column types; the dynamic id list is
+    // expressed as raw SQL so postgres.js receives plain parameters.
+    .where(
+      sql`${noteTags.noteId} in (${sql.join(
+        ids.map((id) => sql`${id}`),
+        sql`, `,
+      )})`,
+    )
+    .orderBy(noteTags.tag);
+  const byNote = new Map<string, string[]>();
+  for (const row of rows) {
+    const list = byNote.get(row.noteId) ?? [];
+    list.push(row.tag);
+    byNote.set(row.noteId, list);
+  }
+  return items.map((item) => ({ ...item, tags: byNote.get(item.id) ?? [] }));
+}
+
+export interface ListNotesFilters {
+  q?: string | null;
+  tag?: string | null;
+  favoriteOnly?: boolean;
+}
+
+function buildListConditions(ownerId: string, filters: ListNotesFilters = {}) {
+  const conditions = [eq(notes.ownerId, ownerId), isNull(notes.deletedAt)];
+  const q = filters.q?.trim();
+  if (q) {
+    const pattern = `%${escapeLike(q)}%`;
+    conditions.push(or(ilike(noteDrafts.title, pattern), ilike(noteDrafts.content, pattern))!);
+  }
+  if (filters.tag) {
+    const tag = normalizeTag(filters.tag);
+    conditions.push(
+      sql`exists (select 1 from ${noteTags} where ${noteTags.noteId} = ${notes.id} and ${noteTags.tag} = ${tag})`,
+    );
+  }
+  if (filters.favoriteOnly) {
+    conditions.push(eq(notes.isFavorite, true));
+  }
+  return and(...conditions);
+}
+
+export async function listNotes(
+  db: Database,
+  ownerId: string,
+  filters: ListNotesFilters = {},
+): Promise<NoteListItem[]> {
   const rows = await db
     .select(NOTE_LIST_COLUMNS)
     .from(notes)
     .innerJoin(noteDrafts, eq(noteDrafts.noteId, notes.id))
     .leftJoin(noteVersions, eq(noteVersions.id, notes.publishedVersionId))
     .leftJoin(noteShares, and(eq(noteShares.noteId, notes.id), isNull(noteShares.revokedAt)))
-    .where(and(eq(notes.ownerId, ownerId), isNull(notes.deletedAt)))
-    .orderBy(desc(noteDrafts.updatedAt));
+    .where(buildListConditions(ownerId, filters))
+    .orderBy(desc(notes.isPinned), desc(noteDrafts.updatedAt), desc(notes.id));
 
-  return rows.map(mapNoteListRow);
+  return attachTags(db, rows.map(mapNoteListRow));
 }
 
 export interface NotesPage {
@@ -297,23 +466,49 @@ export interface NotesPage {
   nextCursor: string | null;
 }
 
-/** Keyset pagination on `(draft.updated_at, note.id)` desc (doc 09). */
+export interface ListNotesPageOptions {
+  limit?: number;
+  cursor?: string | null;
+  q?: string | null;
+  tag?: string | null;
+  favoriteOnly?: boolean;
+}
+
+/**
+ * Keyset pagination on `(is_pinned, draft.updated_at, note.id)` desc (doc 09).
+ * The cursor carries the pinned tier so pinned-first ordering stays stable
+ * across pages, with filters applied before the keyset.
+ */
 export async function listNotesPage(
   db: Database,
   ownerId: string,
-  options: { limit?: number; cursor?: string | null } = {},
+  options: ListNotesPageOptions = {},
 ): Promise<NotesPage> {
   const limit = normalizeLimit(options.limit);
-  const cursor = options.cursor ? decodeCursor<{ u?: string; i?: string }>(options.cursor) : null;
+  const cursor = options.cursor
+    ? decodeCursor<{ p?: boolean; u?: string; i?: string }>(options.cursor)
+    : null;
+  const cursorPinned = cursor?.p ?? null;
   const cursorDate = cursor?.u ? new Date(cursor.u) : null;
   const cursorId = cursor?.i ?? null;
-  const keyset =
-    cursorDate && cursorId
-      ? or(
-          lt(noteDrafts.updatedAt, cursorDate),
-          and(eq(noteDrafts.updatedAt, cursorDate), lt(notes.id, cursorId)),
-        )
-      : undefined;
+
+  const filters: ListNotesFilters = {
+    q: options.q ?? null,
+    tag: options.tag ?? null,
+    favoriteOnly: options.favoriteOnly,
+  };
+  const base = buildListConditions(ownerId, filters);
+
+  let keyset = undefined;
+  if (cursorPinned !== null && cursorDate && cursorId) {
+    const behind = or(
+      lt(noteDrafts.updatedAt, cursorDate),
+      and(eq(noteDrafts.updatedAt, cursorDate), lt(notes.id, cursorId)),
+    );
+    keyset = cursorPinned
+      ? or(and(eq(notes.isPinned, true), behind), eq(notes.isPinned, false))
+      : and(eq(notes.isPinned, false), behind);
+  }
 
   const rows = await db
     .select(NOTE_LIST_COLUMNS)
@@ -321,15 +516,17 @@ export async function listNotesPage(
     .innerJoin(noteDrafts, eq(noteDrafts.noteId, notes.id))
     .leftJoin(noteVersions, eq(noteVersions.id, notes.publishedVersionId))
     .leftJoin(noteShares, and(eq(noteShares.noteId, notes.id), isNull(noteShares.revokedAt)))
-    .where(and(eq(notes.ownerId, ownerId), isNull(notes.deletedAt), keyset))
-    .orderBy(desc(noteDrafts.updatedAt), desc(notes.id))
+    .where(keyset ? and(base, keyset) : base)
+    .orderBy(desc(notes.isPinned), desc(noteDrafts.updatedAt), desc(notes.id))
     .limit(limit + 1);
 
   const hasMore = rows.length > limit;
-  const data = rows.slice(0, limit).map(mapNoteListRow);
+  const data = await attachTags(db, rows.slice(0, limit).map(mapNoteListRow));
   const last = data[data.length - 1];
   const nextCursor =
-    hasMore && last ? encodeCursor({ u: last.updatedAt.toISOString(), i: last.id }) : null;
+    hasMore && last
+      ? encodeCursor({ p: last.isPinned, u: last.updatedAt.toISOString(), i: last.id })
+      : null;
 
   return { data, nextCursor };
 }

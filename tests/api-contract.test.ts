@@ -2,7 +2,7 @@ import { afterAll, beforeEach, expect, it } from "vitest";
 import { closeDb } from "@/db";
 import { createApiToken } from "@/core";
 import { GET as listNotes, POST as createNote } from "@/app/api/v1/notes/route";
-import { GET as getNoteRoute } from "@/app/api/v1/notes/[id]/route";
+import { GET as getNoteRoute, PATCH as updateNoteRoute } from "@/app/api/v1/notes/[id]/route";
 import { POST as publishRoute } from "@/app/api/v1/notes/[id]/publish/route";
 import { POST as acquireLeaseRoute } from "@/app/api/v1/notes/[id]/lease/route";
 import { POST as commitLeaseRoute } from "@/app/api/v1/notes/[id]/lease/commit/route";
@@ -255,5 +255,105 @@ describeWithDatabase("/api/v1 contract", () => {
       )
     ).json()) as { draft: { content: string } };
     expect(view.draft.content).toBe("# agent wrote");
+  });
+
+  it("filters the list by text, tag, and favorites", async () => {
+    const userId = await createTestUser(sql);
+    const token = await tokenFor(userId, ["notes:read", "notes:write"]);
+
+    const first = (await (
+      await createNote(
+        apiRequest("/api/v1/notes", {
+          method: "POST",
+          token,
+          body: { title: "Grocery list", content: "buy milk" },
+        }),
+      )
+    ).json()) as { id: string };
+    const second = (await (
+      await createNote(
+        apiRequest("/api/v1/notes", {
+          method: "POST",
+          token,
+          body: { title: "Work plan", content: "ship it" },
+        }),
+      )
+    ).json()) as { id: string };
+
+    async function patch(id: string, body: unknown) {
+      const response = await updateNoteRoute(
+        apiRequest(`/api/v1/notes/${id}`, { method: "PATCH", token, body }),
+        ctx({ id }),
+      );
+      expect(response.status).toBe(200);
+      return (await response.json()) as { tags: string[] | null };
+    }
+
+    await patch(first.id, { tags: ["home"], favorite: true });
+    await patch(second.id, { tags: ["work"] });
+
+    async function listIds(query: string) {
+      const response = await listNotes(apiRequest(`/api/v1/notes${query}`, { token }));
+      expect(response.status).toBe(200);
+      const page = (await response.json()) as {
+        data: Array<{ id: string; is_favorite: boolean; is_pinned: boolean; tags: string[] }>;
+        next_cursor: string | null;
+      };
+      return page;
+    }
+
+    const byText = await listIds("?q=milk");
+    expect(byText.data.map((note) => note.id)).toEqual([first.id]);
+
+    const byTag = await listIds("?tag=work");
+    expect(byTag.data.map((note) => note.id)).toEqual([second.id]);
+    expect(byTag.data[0]?.tags).toEqual(["work"]);
+
+    const favorites = await listIds("?favorite=1");
+    expect(favorites.data.map((note) => note.id)).toEqual([first.id]);
+    expect(favorites.data[0]?.is_favorite).toBe(true);
+
+    const combined = await listIds("?tag=home&favorite=1");
+    expect(combined.data.map((note) => note.id)).toEqual([first.id]);
+
+    const detail = (await (
+      await getNoteRoute(apiRequest(`/api/v1/notes/${first.id}`, { token }), ctx({ id: first.id }))
+    ).json()) as { tags: string[]; is_favorite: boolean };
+    expect(detail.tags).toEqual(["home"]);
+    expect(detail.is_favorite).toBe(true);
+  });
+
+  it("rejects bad tags and pins notes to the top", async () => {
+    const userId = await createTestUser(sql);
+    const token = await tokenFor(userId, ["notes:read", "notes:write"]);
+
+    const created = (await (
+      await createNote(apiRequest("/api/v1/notes", { method: "POST", token, body: { title: "a" } }))
+    ).json()) as { id: string };
+
+    const badTags = await updateNoteRoute(
+      apiRequest(`/api/v1/notes/${created.id}`, {
+        method: "PATCH",
+        token,
+        body: { tags: ["has space"] },
+      }),
+      ctx({ id: created.id }),
+    );
+    expect(badTags.status).toBe(422);
+
+    const pinned = await updateNoteRoute(
+      apiRequest(`/api/v1/notes/${created.id}`, {
+        method: "PATCH",
+        token,
+        body: { pinned: true },
+      }),
+      ctx({ id: created.id }),
+    );
+    expect(pinned.status).toBe(200);
+
+    const page = (await (await listNotes(apiRequest("/api/v1/notes", { token }))).json()) as {
+      data: Array<{ id: string; is_pinned: boolean }>;
+    };
+    expect(page.data[0]).toMatchObject({ id: created.id, is_pinned: true });
   });
 });

@@ -1,6 +1,6 @@
-import { RefreshCw, Trash2 } from "lucide-react";
+import { Pin, RefreshCw, Star, Trash2 } from "lucide-react";
 import Link from "next/link";
-import { listNotes } from "@/core";
+import { listNotes, listOwnedTags } from "@/core";
 import { getDb } from "@/db";
 import { requireUserOrRedirect } from "@/lib/guard";
 import { buildShareUrl } from "@/lib/share-url";
@@ -10,7 +10,10 @@ import {
   renameNoteAction,
   rotateShareAction,
   setExpiryAction,
+  setTagsAction,
   setVisibilityAction,
+  toggleFavoriteAction,
+  togglePinnedAction,
 } from "./actions";
 import { CopyLinkButton } from "@/components/copy-link-button";
 
@@ -29,9 +32,27 @@ const smallButtonClass =
 const iconButtonClass =
   "inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100";
 
-export default async function DashboardPage() {
+type DashboardSearchParams = {
+  q?: string;
+  tag?: string;
+  favorite?: string;
+};
+
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<DashboardSearchParams>;
+}) {
   const user = await requireUserOrRedirect();
-  const notes = await listNotes(getDb(), user.id);
+  const params = await searchParams;
+  const q = params.q?.trim() ? params.q.trim() : null;
+  const tag = params.tag?.trim() ? params.tag.trim() : null;
+  const favoriteOnly = params.favorite === "1" || params.favorite === "true";
+  const [notes, allTags] = await Promise.all([
+    listNotes(getDb(), user.id, { q, tag, favoriteOnly }),
+    listOwnedTags(getDb(), user.id),
+  ]);
+  const filtering = q !== null || tag !== null || favoriteOnly;
 
   return (
     <main className="mx-auto w-full max-w-3xl flex-1 px-6 py-10">
@@ -42,6 +63,48 @@ export default async function DashboardPage() {
             {notes.length} {notes.length === 1 ? "note" : "notes"}
           </span>
         </div>
+
+        <form method="get" className="flex flex-wrap gap-2">
+          <label className="sr-only" htmlFor="q">
+            Search notes
+          </label>
+          <input
+            id="q"
+            name="q"
+            defaultValue={q ?? ""}
+            placeholder="Search title or content"
+            className={`${inputClass} max-w-xs`}
+          />
+          <label className="sr-only" htmlFor="tag">
+            Filter by tag
+          </label>
+          <select id="tag" name="tag" defaultValue={tag ?? ""} className={selectClass}>
+            <option value="">All tags</option>
+            {allTags.map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </select>
+          <label className="flex h-9 items-center gap-1.5 text-sm text-zinc-600 dark:text-zinc-300">
+            <input
+              type="checkbox"
+              name="favorite"
+              value="1"
+              defaultChecked={favoriteOnly}
+              className="h-4 w-4"
+            />
+            Favorites
+          </label>
+          <button type="submit" className={smallButtonClass}>
+            Filter
+          </button>
+          {filtering ? (
+            <Link href="/dashboard" className={smallButtonClass}>
+              Clear
+            </Link>
+          ) : null}
+        </form>
 
         <form action={createNoteAction} className="flex gap-2">
           <label className="sr-only" htmlFor="new-title">
@@ -55,7 +118,9 @@ export default async function DashboardPage() {
 
         {notes.length === 0 ? (
           <p className="text-sm text-zinc-500">
-            No notes yet. Create one above and it will come with a share link.
+            {filtering
+              ? "No notes match these filters."
+              : "No notes yet. Create one above and it will come with a share link."}
           </p>
         ) : (
           <ul className="divide-y divide-zinc-200 border-y border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
@@ -79,6 +144,31 @@ export default async function DashboardPage() {
                     </div>
                     <div className="flex items-center gap-1">
                       {shareUrl ? <CopyLinkButton url={shareUrl} /> : null}
+                      <form action={toggleFavoriteAction}>
+                        <input type="hidden" name="noteId" value={note.id} />
+                        <button
+                          type="submit"
+                          title={note.isFavorite ? "Unfavorite" : "Favorite"}
+                          aria-label={note.isFavorite ? "Unfavorite" : "Favorite"}
+                          className={iconButtonClass}
+                        >
+                          <Star
+                            className="h-4 w-4"
+                            fill={note.isFavorite ? "currentColor" : "none"}
+                          />
+                        </button>
+                      </form>
+                      <form action={togglePinnedAction}>
+                        <input type="hidden" name="noteId" value={note.id} />
+                        <button
+                          type="submit"
+                          title={note.isPinned ? "Unpin" : "Pin to top"}
+                          aria-label={note.isPinned ? "Unpin" : "Pin to top"}
+                          className={iconButtonClass}
+                        >
+                          <Pin className="h-4 w-4" fill={note.isPinned ? "currentColor" : "none"} />
+                        </button>
+                      </form>
                       <form action={rotateShareAction}>
                         <input type="hidden" name="noteId" value={note.id} />
                         <button
@@ -176,6 +266,37 @@ export default async function DashboardPage() {
                       </button>
                     </form>
                   </div>
+
+                  {note.tags.length > 0 ? (
+                    <p className="flex flex-wrap gap-1">
+                      {note.tags.map((value) => (
+                        <Link
+                          key={value}
+                          href={`/dashboard?tag=${encodeURIComponent(value)}`}
+                          className="rounded-full border border-zinc-300 px-2 py-0.5 text-xs text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                        >
+                          {value}
+                        </Link>
+                      ))}
+                    </p>
+                  ) : null}
+
+                  <form action={setTagsAction} className="flex items-center gap-2">
+                    <input type="hidden" name="noteId" value={note.id} />
+                    <label className="sr-only" htmlFor={`tags-${note.id}`}>
+                      Tags (comma separated)
+                    </label>
+                    <input
+                      id={`tags-${note.id}`}
+                      name="tags"
+                      defaultValue={note.tags.join(", ")}
+                      placeholder="Tags, comma separated"
+                      className={`${inputClass} w-52`}
+                    />
+                    <button type="submit" className={smallButtonClass}>
+                      Save tags
+                    </button>
+                  </form>
 
                   {note.share?.expiresAt ? (
                     <p className="text-xs text-zinc-500">

@@ -1,6 +1,7 @@
 import { desc, sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
+  boolean,
   index,
   integer,
   pgTable,
@@ -36,6 +37,8 @@ export const notes = pgTable(
       .defaultNow()
       .$onUpdate(() => new Date()),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    isFavorite: boolean("is_favorite").notNull().default(false),
+    isPinned: boolean("is_pinned").notNull().default(false),
   },
   (t) => [
     index("notes_owner_idx")
@@ -85,7 +88,26 @@ export const noteVersions = pgTable(
   ],
 );
 
+/** Per-note tags. Tag text is normalized (lowercase, trimmed) in core. */
+export const noteTags = pgTable(
+  "note_tags",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    noteId: uuid("note_id")
+      .notNull()
+      .references(() => notes.id, { onDelete: "cascade" }),
+    tag: text("tag").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("note_tags_note_tag_unique").on(t.noteId, t.tag),
+    index("note_tags_tag_idx").on(t.tag),
+    index("note_tags_note_idx").on(t.noteId),
+  ],
+);
+
 export type Note = typeof notes.$inferSelect;
 export type NewNote = typeof notes.$inferInsert;
+export type NoteTag = typeof noteTags.$inferSelect;
 export type NoteDraft = typeof noteDrafts.$inferSelect;
 export type NoteVersion = typeof noteVersions.$inferSelect;
