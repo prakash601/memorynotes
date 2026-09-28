@@ -65,9 +65,13 @@ async function handleGet(request: Request) {
     const principal = await authenticate(request, "notes:read");
     const url = new URL(request.url);
     const limitParam = url.searchParams.get("limit");
+    const favoriteParam = url.searchParams.get("favorite") ?? url.searchParams.get("favorite_only");
     const page = await listNotesPage(getDb(), principal.userId, {
       limit: limitParam ? Number(limitParam) : undefined,
       cursor: url.searchParams.get("cursor"),
+      q: url.searchParams.get("q"),
+      tag: url.searchParams.get("tag"),
+      favoriteOnly: favoriteParam === "true" || favoriteParam === "1",
     });
 
     return NextResponse.json({
@@ -76,6 +80,9 @@ async function handleGet(request: Request) {
         title: item.title,
         visibility: item.visibility,
         revision: item.revision,
+        is_favorite: item.isFavorite,
+        is_pinned: item.isPinned,
+        tags: item.tags,
         updated_at: item.updatedAt,
         published_version_number: item.publishedVersionNumber,
         share:

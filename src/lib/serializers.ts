@@ -39,6 +39,8 @@ export function serializeNote(note: Note) {
   return {
     id: note.id,
     visibility: note.visibility,
+    is_favorite: note.isFavorite,
+    is_pinned: note.isPinned,
     published_version_id: note.publishedVersionId,
     created_at: note.createdAt,
     updated_at: note.updatedAt,

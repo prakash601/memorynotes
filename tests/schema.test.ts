@@ -19,6 +19,7 @@ const expectedTables = [
   "notes",
   "note_drafts",
   "note_versions",
+  "note_tags",
   // Sharing and leases
   "note_shares",
   "note_leases",
@@ -38,6 +39,9 @@ const expectedIndexes = [
   "note_shares_one_active_idx",
   "note_shares_token_hash_unique",
   "note_versions_number_unique",
+  "note_tags_note_tag_unique",
+  "note_tags_tag_idx",
+  "note_tags_note_idx",
   "users_email_unique",
   "activity_log_target_idx",
 ];

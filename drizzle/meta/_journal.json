@@ -15,6 +15,13 @@
       "when": 1789371894414,
       "tag": "0001_cultured_purple_man",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790590797441,
+      "tag": "0002_search-tags-favorites",
+      "breakpoints": true
     }
   ]
 }

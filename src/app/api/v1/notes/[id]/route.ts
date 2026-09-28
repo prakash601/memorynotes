@@ -1,5 +1,14 @@
 import { NextResponse } from "next/server";
-import { getNoteView, setVisibility, softDeleteNote, updateDraft } from "@/core";
+import {
+  getNoteView,
+  listNoteTags,
+  setFavorite,
+  setNoteTags,
+  setPinned,
+  setVisibility,
+  softDeleteNote,
+  updateDraft,
+} from "@/core";
 import { getDb } from "@/db";
 import { authenticate } from "@/lib/auth";
 import { applyRateLimitHeaders, assertCsrf, parseJsonBody, problemResponse } from "@/lib/http";
@@ -21,9 +30,14 @@ export async function GET(request: Request, context: RouteContext) {
     const principal = await authenticate(request, "notes:read");
     const { id } = await context.params;
     const view = await getNoteView(getDb(), id, principal.userId);
+    const tags =
+      view.note.ownerId === principal.userId
+        ? await listNoteTags(getDb(), id, principal.userId)
+        : [];
 
     return NextResponse.json({
       ...serializeNote(view.note),
+      tags,
       draft: view.draft ? serializeDraft(view.draft) : null,
       share: view.share ? serializeShare(view.share, null) : null,
       published_version: view.publishedVersion
@@ -41,6 +55,9 @@ interface PatchBody {
   base_revision?: number;
   visibility?: string;
   share_token?: string;
+  favorite?: boolean;
+  pinned?: boolean;
+  tags?: string[];
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
@@ -67,6 +84,34 @@ export async function PATCH(request: Request, context: RouteContext) {
         visibility: body.visibility,
       });
       visibility = note.visibility;
+    }
+
+    if (body.favorite !== undefined) {
+      await setFavorite(db, {
+        noteId: id,
+        ownerId: principal.userId,
+        favorite: body.favorite === true,
+      });
+    }
+    if (body.pinned !== undefined) {
+      await setPinned(db, { noteId: id, ownerId: principal.userId, pinned: body.pinned === true });
+    }
+
+    let tags: string[] | null = null;
+    if (body.tags !== undefined) {
+      if (!Array.isArray(body.tags)) {
+        return NextResponse.json(
+          {
+            type: "about:blank",
+            title: "Validation failed",
+            status: 422,
+            detail: "tags must be an array of strings",
+            code: "validation",
+          },
+          { status: 422 },
+        );
+      }
+      tags = await setNoteTags(db, { noteId: id, ownerId: principal.userId, tags: body.tags });
     }
 
     let draft = null;
@@ -97,6 +142,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       id,
       visibility: visibility ?? null,
       draft: draft ? serializeDraft(draft) : null,
+      tags,
     });
     return idempotency.complete(applyRateLimitHeaders(response, state));
   } catch (error) {

@@ -79,10 +79,14 @@ export const MCP_TOOLS: McpToolDefinition[] = [
   },
   {
     name: "list_notes",
-    description: "List the caller's notes, newest first, with optional cursor paging.",
+    description:
+      "List the caller's notes, pinned first then newest, with optional text search (q), tag filter, favorites-only, and cursor paging.",
     inputSchema: objectSchema({
       limit: { type: "integer" },
       cursor: { type: "string" },
+      q: { type: "string" },
+      tag: { type: "string" },
+      favorites_only: { type: "boolean" },
     }),
   },
   {
@@ -324,12 +328,18 @@ async function runTool(
       const page = await listNotesPage(db, ctx.userId, {
         limit: optionalNumber(args, "limit"),
         cursor: optionalString(args, "cursor"),
+        q: optionalString(args, "q"),
+        tag: optionalString(args, "tag"),
+        favoriteOnly: (args as Record<string, unknown>)["favorites_only"] === true,
       });
       return text(`${page.data.length} note(s)`, {
         notes: page.data.map((note) => ({
           id: note.id,
           title: note.title,
           revision: note.revision,
+          is_favorite: note.isFavorite,
+          is_pinned: note.isPinned,
+          tags: note.tags,
           updated_at: note.updatedAt,
           published_version_number: note.publishedVersionNumber,
           share_url: note.share?.rawToken ? shareUrlFromToken(note.share.rawToken) : null,
