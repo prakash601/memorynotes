@@ -1,6 +1,7 @@
 import { and, desc, eq, ilike, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import type { Database } from "@/db";
 import {
+  folders,
   noteDrafts,
   noteShares,
   noteTags,
@@ -111,6 +112,7 @@ export interface CreateNoteInput {
   title?: string;
   content?: string;
   visibility?: string;
+  folderId?: string | null;
   expiresIn?: ShareExpiryOption;
   now?: Date;
   /** Injectable moderator; defaults to the configured provider. */
@@ -137,10 +139,23 @@ export async function createNote(db: Database, input: CreateNoteInput) {
   const expiresAt = input.expiresIn ? resolveExpiry(input.expiresIn, now) : defaultExpiry(now);
   const rawToken = generateShareToken();
 
+  let folderId: string | null = null;
+  if (input.folderId) {
+    const [folder] = await db
+      .select({ id: folders.id })
+      .from(folders)
+      .where(and(eq(folders.id, input.folderId), eq(folders.ownerId, input.ownerId)))
+      .limit(1);
+    if (!folder) {
+      throw new ValidationError("Folder not found");
+    }
+    folderId = folder.id;
+  }
+
   return db.transaction(async (tx) => {
     const [note] = await tx
       .insert(notes)
-      .values({ ownerId: input.ownerId, visibility })
+      .values({ ownerId: input.ownerId, visibility, folderId })
       .returning();
 
     const [draft] = await tx
@@ -224,6 +239,7 @@ export interface NoteListItem {
   title: string;
   visibility: NoteVisibility;
   revision: number;
+  folderId: string | null;
   updatedAt: Date;
   isFavorite: boolean;
   isPinned: boolean;
@@ -242,6 +258,7 @@ interface NoteListRow {
   visibility: NoteVisibility;
   title: string;
   revision: number;
+  folderId: string | null;
   updatedAt: Date;
   isFavorite: boolean;
   isPinned: boolean;
@@ -258,6 +275,7 @@ function mapNoteListRow(row: NoteListRow): NoteListItem {
     title: row.title,
     visibility: row.visibility,
     revision: row.revision,
+    folderId: row.folderId,
     updatedAt: row.updatedAt,
     isFavorite: row.isFavorite,
     isPinned: row.isPinned,
@@ -280,6 +298,7 @@ const NOTE_LIST_COLUMNS = {
   visibility: notes.visibility,
   title: noteDrafts.title,
   revision: noteDrafts.revision,
+  folderId: notes.folderId,
   updatedAt: noteDrafts.updatedAt,
   isFavorite: notes.isFavorite,
   isPinned: notes.isPinned,
@@ -423,6 +442,7 @@ export interface ListNotesFilters {
   q?: string | null;
   tag?: string | null;
   favoriteOnly?: boolean;
+  folderId?: string | null;
 }
 
 function buildListConditions(ownerId: string, filters: ListNotesFilters = {}) {
@@ -440,6 +460,11 @@ function buildListConditions(ownerId: string, filters: ListNotesFilters = {}) {
   }
   if (filters.favoriteOnly) {
     conditions.push(eq(notes.isFavorite, true));
+  }
+  if (filters.folderId !== undefined) {
+    conditions.push(
+      filters.folderId === null ? isNull(notes.folderId) : eq(notes.folderId, filters.folderId),
+    );
   }
   return and(...conditions);
 }
@@ -472,6 +497,7 @@ export interface ListNotesPageOptions {
   q?: string | null;
   tag?: string | null;
   favoriteOnly?: boolean;
+  folderId?: string | null;
 }
 
 /**
@@ -496,6 +522,7 @@ export async function listNotesPage(
     q: options.q ?? null,
     tag: options.tag ?? null,
     favoriteOnly: options.favoriteOnly,
+    folderId: options.folderId,
   };
   const base = buildListConditions(ownerId, filters);
 

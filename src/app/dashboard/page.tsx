@@ -1,12 +1,16 @@
 import { Pin, RefreshCw, Star, Trash2 } from "lucide-react";
 import Link from "next/link";
-import { listNotes, listOwnedTags } from "@/core";
+import { buildFolderTree, countNotesByFolder, listFolders, listNotes, listOwnedTags } from "@/core";
 import { getDb } from "@/db";
 import { requireUserOrRedirect } from "@/lib/guard";
 import { buildShareUrl } from "@/lib/share-url";
 import {
+  createFolderAction,
   createNoteAction,
+  deleteFolderAction,
   deleteNoteAction,
+  moveNoteAction,
+  renameFolderAction,
   renameNoteAction,
   rotateShareAction,
   setExpiryAction,
@@ -36,6 +40,7 @@ type DashboardSearchParams = {
   q?: string;
   tag?: string;
   favorite?: string;
+  folder?: string;
 };
 
 export default async function DashboardPage({
@@ -48,11 +53,64 @@ export default async function DashboardPage({
   const q = params.q?.trim() ? params.q.trim() : null;
   const tag = params.tag?.trim() ? params.tag.trim() : null;
   const favoriteOnly = params.favorite === "1" || params.favorite === "true";
-  const [notes, allTags] = await Promise.all([
-    listNotes(getDb(), user.id, { q, tag, favoriteOnly }),
+  const activeFolder = params.folder?.trim() ? params.folder.trim() : null;
+  const folderFilter =
+    activeFolder === null
+      ? {}
+      : activeFolder === "none"
+        ? { folderId: null }
+        : { folderId: activeFolder };
+  const [notes, allTags, folderRows, folderCounts, unfiledNotes] = await Promise.all([
+    listNotes(getDb(), user.id, { q, tag, favoriteOnly, ...folderFilter }),
     listOwnedTags(getDb(), user.id),
+    listFolders(getDb(), user.id),
+    countNotesByFolder(getDb(), user.id),
+    listNotes(getDb(), user.id, { q, tag, favoriteOnly, folderId: null }),
   ]);
-  const filtering = q !== null || tag !== null || favoriteOnly;
+  const folderTree = buildFolderTree(folderRows);
+  const renderFolderNodes = (nodes: typeof folderTree): React.ReactNode =>
+    nodes.map((folder) => (
+      <span key={folder.id} className="inline-flex flex-col gap-1">
+        <span className="inline-flex items-center gap-1" style={{ marginLeft: folder.depth * 16 }}>
+          <Link
+            href={withFolder(folder.id)}
+            className={`${smallButtonClass} ${activeFolder === folder.id ? "bg-zinc-100 dark:bg-zinc-800" : ""}`}
+          >
+            {folder.name} ({folderCounts[folder.id] ?? 0})
+          </Link>
+          <form action={deleteFolderAction}>
+            <input type="hidden" name="folderId" value={folder.id} />
+            <button
+              type="submit"
+              title={`Delete folder ${folder.name} (keeps notes)`}
+              aria-label={`Delete folder ${folder.name}`}
+              className={iconButtonClass}
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </form>
+        </span>
+        {folder.children.length > 0 ? renderFolderNodes(folder.children) : null}
+      </span>
+    ));
+  const filtering = q !== null || tag !== null || favoriteOnly || activeFolder !== null;
+  const withFolder = (folder: string | null) => {
+    const sp = new URLSearchParams();
+    if (q) {
+      sp.set("q", q);
+    }
+    if (tag) {
+      sp.set("tag", tag);
+    }
+    if (favoriteOnly) {
+      sp.set("favorite", "1");
+    }
+    if (folder) {
+      sp.set("folder", folder);
+    }
+    const qs = sp.toString();
+    return qs ? `/dashboard?${qs}` : "/dashboard";
+  };
 
   return (
     <main className="mx-auto w-full max-w-3xl flex-1 px-6 py-10">
@@ -105,6 +163,63 @@ export default async function DashboardPage({
             </Link>
           ) : null}
         </form>
+
+        <section aria-label="Folders" className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href={withFolder(null)}
+              className={`${smallButtonClass} ${activeFolder ? "" : "bg-zinc-100 dark:bg-zinc-800"}`}
+            >
+              All folders
+            </Link>
+            <Link
+              href={withFolder("none")}
+              className={`${smallButtonClass} ${activeFolder === "none" ? "bg-zinc-100 dark:bg-zinc-800" : ""}`}
+            >
+              Unfiled ({unfiledNotes.length})
+            </Link>
+            {renderFolderNodes(folderTree)}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <form action={createFolderAction} className="flex items-center gap-2">
+              <label className="sr-only" htmlFor="new-folder">
+                New folder name
+              </label>
+              <input
+                id="new-folder"
+                name="name"
+                placeholder="New folder"
+                className={`${inputClass} w-40`}
+              />
+              <button type="submit" className={smallButtonClass}>
+                Add folder
+              </button>
+            </form>
+            {folderTree.length > 0 ? (
+              <form action={renameFolderAction} className="flex items-center gap-2">
+                <select name="folderId" className={selectClass} aria-label="Folder to rename">
+                  {folderTree.map((folder) => (
+                    <option key={folder.id} value={folder.id}>
+                      {folder.name}
+                    </option>
+                  ))}
+                </select>
+                <label className="sr-only" htmlFor="rename-folder">
+                  New name
+                </label>
+                <input
+                  id="rename-folder"
+                  name="name"
+                  placeholder="New name"
+                  className={`${inputClass} w-32`}
+                />
+                <button type="submit" className={smallButtonClass}>
+                  Rename
+                </button>
+              </form>
+            ) : null}
+          </div>
+        </section>
 
         <form action={createNoteAction} className="flex gap-2">
           <label className="sr-only" htmlFor="new-title">
@@ -246,6 +361,29 @@ export default async function DashboardPage({
                       </select>
                       <button type="submit" className={smallButtonClass}>
                         Set
+                      </button>
+                    </form>
+
+                    <form action={moveNoteAction} className="flex items-center gap-2">
+                      <input type="hidden" name="noteId" value={note.id} />
+                      <label className="sr-only" htmlFor={`folder-${note.id}`}>
+                        Move to folder
+                      </label>
+                      <select
+                        id={`folder-${note.id}`}
+                        name="folderId"
+                        defaultValue={note.folderId ?? ""}
+                        className={selectClass}
+                      >
+                        <option value="">No folder</option>
+                        {folderRows.map((folder) => (
+                          <option key={folder.id} value={folder.id}>
+                            {folder.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button type="submit" className={smallButtonClass}>
+                        Move
                       </button>
                     </form>
 

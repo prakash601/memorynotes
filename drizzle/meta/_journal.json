@@ -22,6 +22,13 @@
       "when": 1790590797441,
       "tag": "0002_search-tags-favorites",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790598394294,
+      "tag": "0003_folders",
+      "breakpoints": true
     }
   ]
 }

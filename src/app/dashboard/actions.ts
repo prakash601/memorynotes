@@ -3,10 +3,14 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import {
+  createFolder,
   createNote,
+  deleteFolder,
   getOwnedNote,
+  renameFolder,
   rotateShare,
   setFavorite,
+  setNoteFolder,
   setNoteTags,
   setPinned,
   setVisibility,
@@ -112,5 +116,45 @@ export async function setTagsAction(formData: FormData): Promise<void> {
     .map((tag) => tag.trim())
     .filter(Boolean);
   await setNoteTags(getDb(), { noteId, ownerId: user.id, tags });
+  revalidatePath("/dashboard");
+}
+
+export async function createFolderAction(formData: FormData): Promise<void> {
+  const user = await requireUserOrRedirect();
+  await createFolder(getDb(), {
+    ownerId: user.id,
+    name: String(formData.get("name") ?? ""),
+    parentId: String(formData.get("parentId") ?? "") || null,
+  });
+  revalidatePath("/dashboard");
+}
+
+export async function renameFolderAction(formData: FormData): Promise<void> {
+  const user = await requireUserOrRedirect();
+  await renameFolder(getDb(), {
+    folderId: String(formData.get("folderId") ?? ""),
+    ownerId: user.id,
+    name: String(formData.get("name") ?? ""),
+  });
+  revalidatePath("/dashboard");
+}
+
+export async function deleteFolderAction(formData: FormData): Promise<void> {
+  const user = await requireUserOrRedirect();
+  await deleteFolder(getDb(), {
+    folderId: String(formData.get("folderId") ?? ""),
+    ownerId: user.id,
+  });
+  revalidatePath("/dashboard");
+}
+
+export async function moveNoteAction(formData: FormData): Promise<void> {
+  const user = await requireUserOrRedirect();
+  const folderId = String(formData.get("folderId") ?? "");
+  await setNoteFolder(getDb(), {
+    noteId: String(formData.get("noteId") ?? ""),
+    ownerId: user.id,
+    folderId: folderId || null,
+  });
   revalidatePath("/dashboard");
 }
