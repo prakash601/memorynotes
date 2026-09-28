@@ -4,6 +4,7 @@ import {
   createFolder,
   createNote,
   deleteFolder,
+  getShareView,
   listFolders,
   listNotes,
   listNotesPage,
@@ -108,6 +109,21 @@ describeWithDatabase("folders and collections", () => {
     const notes = await listNotes(db, userId, {});
     expect(notes[0]?.folderId).toBe(child.id);
     expect(notes[0]?.title).toBe("a");
+  });
+
+  it("keeps share links intact across moves and folder deletes", async () => {
+    const userId = await createTestUser(sql);
+    const folder = await createFolder(db, { ownerId: userId, name: "Work" });
+    const { note, rawToken } = await createNote(db, { ownerId: userId, title: "shared" });
+
+    await setNoteFolder(db, { noteId: note.id, ownerId: userId, folderId: folder.id });
+    const afterMove = await getShareView(db, note.id, userId);
+    expect(afterMove?.rawToken).toBe(rawToken);
+
+    await deleteFolder(db, { folderId: folder.id, ownerId: userId });
+    const afterDelete = await getShareView(db, note.id, userId);
+    expect(afterDelete?.rawToken).toBe(rawToken);
+    expect((await listNotes(db, userId, {}))[0]?.id).toBe(note.id);
   });
 
   it("renames folders", async () => {

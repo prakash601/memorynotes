@@ -68,6 +68,31 @@ export default async function DashboardPage({
     listNotes(getDb(), user.id, { q, tag, favoriteOnly, folderId: null }),
   ]);
   const folderTree = buildFolderTree(folderRows);
+  const renderFolderNodes = (nodes: typeof folderTree): React.ReactNode =>
+    nodes.map((folder) => (
+      <span key={folder.id} className="inline-flex flex-col gap-1">
+        <span className="inline-flex items-center gap-1" style={{ marginLeft: folder.depth * 16 }}>
+          <Link
+            href={withFolder(folder.id)}
+            className={`${smallButtonClass} ${activeFolder === folder.id ? "bg-zinc-100 dark:bg-zinc-800" : ""}`}
+          >
+            {folder.name} ({folderCounts[folder.id] ?? 0})
+          </Link>
+          <form action={deleteFolderAction}>
+            <input type="hidden" name="folderId" value={folder.id} />
+            <button
+              type="submit"
+              title={`Delete folder ${folder.name} (keeps notes)`}
+              aria-label={`Delete folder ${folder.name}`}
+              className={iconButtonClass}
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </form>
+        </span>
+        {folder.children.length > 0 ? renderFolderNodes(folder.children) : null}
+      </span>
+    ));
   const filtering = q !== null || tag !== null || favoriteOnly || activeFolder !== null;
   const withFolder = (folder: string | null) => {
     const sp = new URLSearchParams();
@@ -153,27 +178,7 @@ export default async function DashboardPage({
             >
               Unfiled ({unfiledNotes.length})
             </Link>
-            {folderTree.map((folder) => (
-              <span key={folder.id} className="inline-flex items-center gap-1">
-                <Link
-                  href={withFolder(folder.id)}
-                  className={`${smallButtonClass} ${activeFolder === folder.id ? "bg-zinc-100 dark:bg-zinc-800" : ""}`}
-                >
-                  {folder.name} ({folderCounts[folder.id] ?? 0})
-                </Link>
-                <form action={deleteFolderAction}>
-                  <input type="hidden" name="folderId" value={folder.id} />
-                  <button
-                    type="submit"
-                    title={`Delete folder ${folder.name} (keeps notes)`}
-                    aria-label={`Delete folder ${folder.name}`}
-                    className={iconButtonClass}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </form>
-              </span>
-            ))}
+            {renderFolderNodes(folderTree)}
           </div>
           <div className="flex flex-wrap gap-2">
             <form action={createFolderAction} className="flex items-center gap-2">

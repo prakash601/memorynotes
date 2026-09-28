@@ -2,6 +2,11 @@ import { afterAll, beforeEach, expect, it } from "vitest";
 import { closeDb } from "@/db";
 import { createApiToken } from "@/core";
 import { GET as listNotes, POST as createNote } from "@/app/api/v1/notes/route";
+import {
+  DELETE as deleteFolderRoute,
+  PATCH as updateFolderRoute,
+} from "@/app/api/v1/folders/[id]/route";
+import { GET as listFoldersRoute, POST as createFolderRoute } from "@/app/api/v1/folders/route";
 import { GET as getNoteRoute, PATCH as updateNoteRoute } from "@/app/api/v1/notes/[id]/route";
 import { POST as publishRoute } from "@/app/api/v1/notes/[id]/publish/route";
 import { POST as acquireLeaseRoute } from "@/app/api/v1/notes/[id]/lease/route";
@@ -355,5 +360,86 @@ describeWithDatabase("/api/v1 contract", () => {
       data: Array<{ id: string; is_pinned: boolean }>;
     };
     expect(page.data[0]).toMatchObject({ id: created.id, is_pinned: true });
+  });
+
+  it("manages folders and moves notes over HTTP", async () => {
+    const userId = await createTestUser(sql);
+    const token = await tokenFor(userId, ["notes:read", "notes:write"]);
+
+    async function createFolder(body: unknown) {
+      const response = await createFolderRoute(
+        apiRequest("/api/v1/folders", { method: "POST", token, body }),
+      );
+      expect(response.status).toBe(201);
+      return (await response.json()) as { folder: { id: string; name: string } };
+    }
+
+    const { folder } = await createFolder({ name: "Work" });
+    const renamed = await updateFolderRoute(
+      apiRequest(`/api/v1/folders/${folder.id}`, {
+        method: "PATCH",
+        token,
+        body: { name: "Play" },
+      }),
+      ctx({ id: folder.id }),
+    );
+    expect(renamed.status).toBe(200);
+    expect(await renamed.json()).toMatchObject({ folder: { id: folder.id, name: "Play" } });
+
+    const created = (await (
+      await createNote(
+        apiRequest("/api/v1/notes", {
+          method: "POST",
+          token,
+          body: { title: "filed", folder_id: folder.id },
+        }),
+      )
+    ).json()) as { id: string };
+
+    const filtered = (await (
+      await listNotes(apiRequest(`/api/v1/notes?folder_id=${folder.id}`, { token }))
+    ).json()) as { data: Array<{ id: string; folder_id: string | null }> };
+    expect(filtered.data.map((note) => note.id)).toEqual([created.id]);
+    expect(filtered.data[0]?.folder_id).toBe(folder.id);
+
+    const moved = await updateNoteRoute(
+      apiRequest(`/api/v1/notes/${created.id}`, {
+        method: "PATCH",
+        token,
+        body: { folder_id: null },
+      }),
+      ctx({ id: created.id }),
+    );
+    expect(moved.status).toBe(200);
+    expect(await moved.json()).toMatchObject({ folder_id: null });
+
+    const foreign = await updateNoteRoute(
+      apiRequest(`/api/v1/notes/${created.id}`, {
+        method: "PATCH",
+        token,
+        body: { folder_id: "00000000-0000-0000-0000-000000000000" },
+      }),
+      ctx({ id: created.id }),
+    );
+    expect(foreign.status).toBe(404);
+
+    const listed = (await (
+      await listFoldersRoute(apiRequest("/api/v1/folders", { token }))
+    ).json()) as { data: Array<{ id: string }> };
+    expect(listed.data.map((entry) => entry.id)).toEqual([folder.id]);
+
+    const deleted = await deleteFolderRoute(
+      apiRequest(`/api/v1/folders/${folder.id}`, { method: "DELETE", token }),
+      ctx({ id: folder.id }),
+    );
+    expect(deleted.status).toBe(200);
+
+    const view = (await (
+      await getNoteRoute(
+        apiRequest(`/api/v1/notes/${created.id}`, { token }),
+        ctx({ id: created.id }),
+      )
+    ).json()) as { id: string };
+    expect(view.id).toBe(created.id);
   });
 });
