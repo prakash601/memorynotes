@@ -68,6 +68,7 @@ export const MCP_TOOLS: McpToolDefinition[] = [
       title: { type: "string" },
       content: { type: "string" },
       visibility: { type: "string", enum: ["unlisted", "public", "private"] },
+      folder_id: { type: "string" },
       expires_in: { type: "string", enum: ["1h", "24h", "7d", "30d", "90d", "never"] },
     }),
   },
@@ -87,6 +88,7 @@ export const MCP_TOOLS: McpToolDefinition[] = [
       q: { type: "string" },
       tag: { type: "string" },
       favorites_only: { type: "boolean" },
+      folder_id: { type: "string" },
     }),
   },
   {
@@ -297,6 +299,7 @@ async function runTool(
         title: optionalString(args, "title"),
         content: optionalString(args, "content"),
         visibility: optionalString(args, "visibility"),
+        folderId: optionalString(args, "folder_id"),
         expiresIn: optionalString(args, "expires_in") as ShareExpiryOption | undefined,
       });
       const url = shareUrlFromToken(created.rawToken);
@@ -331,6 +334,7 @@ async function runTool(
         q: optionalString(args, "q"),
         tag: optionalString(args, "tag"),
         favoriteOnly: (args as Record<string, unknown>)["favorites_only"] === true,
+        folderId: optionalString(args, "folder_id"),
       });
       return text(`${page.data.length} note(s)`, {
         notes: page.data.map((note) => ({
@@ -340,6 +344,7 @@ async function runTool(
           is_favorite: note.isFavorite,
           is_pinned: note.isPinned,
           tags: note.tags,
+          folder_id: note.folderId,
           updated_at: note.updatedAt,
           published_version_number: note.publishedVersionNumber,
           share_url: note.share?.rawToken ? shareUrlFromToken(note.share.rawToken) : null,

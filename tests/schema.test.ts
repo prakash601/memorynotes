@@ -18,8 +18,9 @@ const expectedTables = [
   // Core notes
   "notes",
   "note_drafts",
-  "note_versions",
+  "notes",
   "note_tags",
+  "folders",
   // Sharing and leases
   "note_shares",
   "note_leases",
@@ -42,6 +43,9 @@ const expectedIndexes = [
   "note_tags_note_tag_unique",
   "note_tags_tag_idx",
   "note_tags_note_idx",
+  "folders_owner_idx",
+  "folders_parent_idx",
+  "notes_folder_idx",
   "users_email_unique",
   "activity_log_target_idx",
 ];

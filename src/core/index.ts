@@ -18,6 +18,7 @@ export * from "./rate-limit";
 export * from "./notifications";
 export * from "./activity";
 export * from "./notes";
+export * from "./folders";
 export * from "./leases";
 export * from "./sharing";
 export * from "./reports";

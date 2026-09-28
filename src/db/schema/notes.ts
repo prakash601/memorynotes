@@ -39,6 +39,9 @@ export const notes = pgTable(
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     isFavorite: boolean("is_favorite").notNull().default(false),
     isPinned: boolean("is_pinned").notNull().default(false),
+    folderId: uuid("folder_id").references((): AnyPgColumn => folders.id, {
+      onDelete: "set null",
+    }),
   },
   (t) => [
     index("notes_owner_idx")
@@ -47,6 +50,7 @@ export const notes = pgTable(
     index("notes_purge_idx")
       .on(t.deletedAt)
       .where(sql`${t.deletedAt} is not null`),
+    index("notes_folder_idx").on(t.folderId),
   ],
 );
 
@@ -105,6 +109,33 @@ export const noteTags = pgTable(
     index("note_tags_note_idx").on(t.noteId),
   ],
 );
+
+/**
+ * Owner-scoped folders for organizing notes. Nesting is a single nullable
+ * self-reference; depth limits and cycle guards live in the service layer.
+ */
+export const folders = pgTable(
+  "folders",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerId: uuid("owner_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    parentId: uuid("parent_id").references((): AnyPgColumn => folders.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [index("folders_owner_idx").on(t.ownerId), index("folders_parent_idx").on(t.parentId)],
+);
+
+export type Folder = typeof folders.$inferSelect;
+export type NewFolder = typeof folders.$inferInsert;
 
 export type Note = typeof notes.$inferSelect;
 export type NewNote = typeof notes.$inferInsert;

@@ -3,6 +3,7 @@ import {
   getNoteView,
   listNoteTags,
   setFavorite,
+  setNoteFolder,
   setNoteTags,
   setPinned,
   setVisibility,
@@ -58,6 +59,7 @@ interface PatchBody {
   favorite?: boolean;
   pinned?: boolean;
   tags?: string[];
+  folder_id?: string | null;
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
@@ -114,6 +116,16 @@ export async function PATCH(request: Request, context: RouteContext) {
       tags = await setNoteTags(db, { noteId: id, ownerId: principal.userId, tags: body.tags });
     }
 
+    let folderId: string | null | undefined;
+    if (body.folder_id !== undefined) {
+      const updated = await setNoteFolder(db, {
+        noteId: id,
+        ownerId: principal.userId,
+        folderId: body.folder_id,
+      });
+      folderId = updated.folderId;
+    }
+
     let draft = null;
     if (body.title !== undefined || body.content !== undefined) {
       if (body.base_revision === undefined) {
@@ -143,6 +155,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       visibility: visibility ?? null,
       draft: draft ? serializeDraft(draft) : null,
       tags,
+      folder_id: folderId ?? null,
     });
     return idempotency.complete(applyRateLimitHeaders(response, state));
   } catch (error) {

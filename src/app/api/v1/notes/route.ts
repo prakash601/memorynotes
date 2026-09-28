@@ -16,6 +16,7 @@ interface CreateNoteBody {
   title?: string;
   content?: string;
   visibility?: string;
+  folder_id?: string | null;
   expires_in?: ShareExpiryOption;
 }
 
@@ -41,6 +42,7 @@ async function handlePost(request: Request) {
       title: body.title,
       content: body.content,
       visibility: body.visibility,
+      folderId: body.folder_id ?? null,
       expiresIn: body.expires_in,
     });
 
@@ -72,6 +74,7 @@ async function handleGet(request: Request) {
       q: url.searchParams.get("q"),
       tag: url.searchParams.get("tag"),
       favoriteOnly: favoriteParam === "true" || favoriteParam === "1",
+      folderId: url.searchParams.get("folder_id") ?? url.searchParams.get("folderId"),
     });
 
     return NextResponse.json({
@@ -83,6 +86,7 @@ async function handleGet(request: Request) {
         is_favorite: item.isFavorite,
         is_pinned: item.isPinned,
         tags: item.tags,
+        folder_id: item.folderId,
         updated_at: item.updatedAt,
         published_version_number: item.publishedVersionNumber,
         share:
