@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   getNoteView,
+  hardDeleteNote,
   listNoteTags,
   setFavorite,
   setNoteFolder,
@@ -169,12 +170,28 @@ export async function DELETE(request: Request, context: RouteContext) {
     assertCsrf(request);
     const { id } = await context.params;
 
-    const idempotency = await beginIdempotency(request, principal, "");
+    // Permanent delete is a separate, confirmed path: only trash contents can
+    // be hard-deleted, and the caller must say so twice in one body.
+    const text = await request.text();
+    let permanent = false;
+    if (text.trim()) {
+      const body = parseJsonBody<{ permanent?: boolean; confirm?: boolean }>(text);
+      permanent = body.permanent === true && body.confirm === true;
+    }
+
+    const idempotency = await beginIdempotency(request, principal, text);
     if (idempotency.replay) {
       return idempotency.replay;
     }
 
     const state = await limit("api_account_minute", principal.userId);
+
+    if (permanent) {
+      const deleted = await hardDeleteNote(getDb(), { noteId: id, ownerId: principal.userId });
+      const response = NextResponse.json({ id: deleted.id, permanently_deleted: true });
+      return idempotency.complete(applyRateLimitHeaders(response, state));
+    }
+
     const note = await softDeleteNote(getDb(), { noteId: id, ownerId: principal.userId });
 
     const response = NextResponse.json({ id: note.id, deleted_at: note.deletedAt });
