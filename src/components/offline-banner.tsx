@@ -4,9 +4,7 @@ import { useEffect, useState } from "react";
 import { OFFLINE_QUEUE_EVENT, getBrowserDraftStore } from "@/lib/offline-queue";
 
 export function OfflineBanner() {
-  const [online, setOnline] = useState(
-    () => typeof navigator === "undefined" || navigator.onLine,
-  );
+  const [online, setOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine);
   const [pending, setPending] = useState(0);
 
   useEffect(() => {

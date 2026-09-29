@@ -126,11 +126,7 @@ describe("double-submit guard (Idempotency-Key replay)", () => {
     const created = NextResponse.json({ id: "note-1" }, { status: 201 });
     await first.complete(created);
 
-    const retry = await beginIdempotency(
-      writeRequest("double-submit-key", body),
-      principal,
-      body,
-    );
+    const retry = await beginIdempotency(writeRequest("double-submit-key", body), principal, body);
     expect(retry.replay).not.toBeNull();
     expect(retry.replay!.headers.get("idempotency-replayed")).toBe("true");
     expect(retry.replay!.status).toBe(201);
