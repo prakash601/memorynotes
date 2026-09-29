@@ -5,6 +5,12 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CopyLinkButton } from "@/components/copy-link-button";
 import { MAX_IMAGE_BYTES } from "@/core";
+import {
+  enqueueDraft,
+  flushQueue,
+  getBrowserDraftStore,
+  sendQueuedDraft,
+} from "@/lib/offline-queue";
 import { publishAction, restoreAction, saveDraftAction } from "./actions";
 
 interface VersionItem {
@@ -68,6 +74,7 @@ export function NoteEditor(props: NoteEditorProps) {
   const [status, setStatus] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [queued, setQueued] = useState(false);
   const [diffVersion, setDiffVersion] = useState<number | null>(null);
   const [diffMode, setDiffMode] = useState<"inline" | "side">("inline");
   const [diffData, setDiffData] = useState<VersionDiff | null>(null);
@@ -79,22 +86,57 @@ export function NoteEditor(props: NoteEditorProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const revisionRef = useRef(props.initialRevision);
+  // Double-submit guard: server actions have no Idempotency-Key header, so an
+  // in-flight flag plus the disabled Save button is what stops a second tap
+  // from issuing a second write. Queued offline flushes go through PATCH with
+  // a stable Idempotency-Key instead (see sendQueuedDraft).
+  const saveInFlight = useRef(false);
   const lastSavedRef = useRef({ title: props.initialTitle, content: props.initialContent });
   const autoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  async function queueOffline(snapshot: { title: string; content: string }) {
+    try {
+      await enqueueDraft(getBrowserDraftStore(), {
+        noteId: props.noteId,
+        shareToken: props.shareToken,
+        title: snapshot.title,
+        content: snapshot.content,
+        baseRevision: revisionRef.current,
+      });
+      setQueued(true);
+      setStatus("Offline: draft queued on this device, will sync when reconnected");
+    } catch {
+      setStatus("Offline: could not queue the draft on this device");
+    }
+  }
+
   async function handleSave() {
+    if (saveInFlight.current) {
+      return;
+    }
+    saveInFlight.current = true;
     setBusy(true);
     setStatus(null);
-    const result = await saveDraftAction({
-      noteId: props.noteId,
-      shareToken: props.shareToken,
-      title,
-      content,
-      baseRevision: revision,
-    });
+    let result: Awaited<ReturnType<typeof saveDraftAction>> | null = null;
+    try {
+      result = await saveDraftAction({
+        noteId: props.noteId,
+        shareToken: props.shareToken,
+        title,
+        content,
+        baseRevision: revision,
+      });
+    } catch (error) {
+      // Auth redirects must still navigate; only network failures queue offline.
+      if (error instanceof Error && error.message.includes("NEXT_REDIRECT")) {
+        throw error;
+      }
+      result = null;
+    }
+    saveInFlight.current = false;
     setBusy(false);
 
-    if (result.ok && result.revision !== undefined) {
+    if (result && result.ok && result.revision !== undefined) {
       setRevision(result.revision);
       revisionRef.current = result.revision;
       lastSavedRef.current = { title, content };
@@ -102,12 +144,18 @@ export function NoteEditor(props: NoteEditorProps) {
       setStatus("Draft saved");
       return;
     }
-    if (result.conflict) {
+    if (result && result.conflict) {
       setConflict(true);
       setStatus("Not saved: this note changed elsewhere");
       return;
     }
-    setStatus(result.message ?? "Save failed");
+    // No response at all (or a thrown redirect/network failure) while the
+    // browser reports offline: keep the airplane-mode draft on this device.
+    if (!result && typeof navigator !== "undefined" && !navigator.onLine) {
+      await queueOffline({ title, content });
+      return;
+    }
+    setStatus(result?.message ?? "Save failed");
   }
 
   async function handlePublish() {
@@ -300,6 +348,49 @@ export function NoteEditor(props: NoteEditorProps) {
     };
   }, [title, content, conflict, props.noteId, props.shareToken]);
 
+  // Flush queued offline drafts on mount and on reconnect. Synced entries
+  // apply through the idempotent PATCH path; 409s reuse the conflict banner.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function flush() {
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        return;
+      }
+      let summary: Awaited<ReturnType<typeof flushQueue>> | null = null;
+      try {
+        summary = await flushQueue(getBrowserDraftStore(), sendQueuedDraft);
+      } catch {
+        return;
+      }
+      if (cancelled || !summary) {
+        return;
+      }
+      const remaining = await getBrowserDraftStore()
+        .list()
+        .catch(() => []);
+      setQueued(remaining.length > 0);
+      if (summary.conflicts.includes(props.noteId)) {
+        setConflict(true);
+        setStatus("Not saved: this note changed elsewhere");
+        return;
+      }
+      const synced = summary.synced.includes(props.noteId);
+      if (synced) {
+        // The server is the source of truth after a flush; reload the draft so
+        // the revision and content match what actually applied.
+        window.location.reload();
+      }
+    }
+
+    void flush();
+    window.addEventListener("online", flush);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("online", flush);
+    };
+  }, [props.noteId]);
+
   return (
     <main className="mx-auto w-full max-w-3xl flex-1 px-6 py-10">
       <div className="flex flex-col gap-6">
@@ -357,6 +448,12 @@ export function NoteEditor(props: NoteEditorProps) {
               Reload
             </button>
           </div>
+        ) : null}
+
+        {queued && !conflict ? (
+          <p className="rounded-md border border-zinc-300 bg-zinc-100 px-3 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+            Offline draft queued on this device. It will sync automatically when you reconnect.
+          </p>
         ) : null}
 
         {status ? <p className="text-sm text-zinc-500">{status}</p> : null}
