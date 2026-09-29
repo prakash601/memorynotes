@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { ForbiddenError, resolveShare } from "@/core";
+import { ForbiddenError, hashToken, resolveShare } from "@/core";
 import { getDb } from "@/db";
 import { problemResponse } from "@/lib/http";
 import { limit } from "@/lib/rate-limit";
@@ -17,7 +17,14 @@ export async function GET(request: Request, context: RouteContext) {
   try {
     await limit("read_ip_minute", hashIp(clientIp(request)));
     const { token } = await context.params;
-    const { note, version } = await resolveShare(getDb(), token);
+    const url = new URL(request.url);
+    const password = url.searchParams.get("password");
+    if (password !== null) {
+      await limit("share_password_attempt", `${hashIp(clientIp(request))}:${hashToken(token)}`);
+    }
+    const { note, version } = await resolveShare(getDb(), token, new Date(), {
+      password: password ?? undefined,
+    });
 
     if (note.visibility === "private") {
       throw new ForbiddenError("This note is private");

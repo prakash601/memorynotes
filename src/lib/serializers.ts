@@ -7,6 +7,9 @@ export function serializeShare(share: NoteShare, rawToken: string | null) {
     access: share.access,
     prefix: share.tokenPrefix,
     expires_at: share.expiresAt,
+    password_protected: share.passwordHash !== null,
+    max_views: share.maxViews,
+    views_count: share.viewsCount,
   };
 }
 
