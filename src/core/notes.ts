@@ -39,6 +39,7 @@ import {
   tokenPrefix,
 } from "./tokens";
 import { assertContentSize, normalizeContent, normalizeTitle } from "./validation";
+import { diffText, type TextDiff } from "./diff";
 
 function assertVisibility(value: string): asserts value is NoteVisibility {
   if (!(NOTE_VISIBILITIES as readonly string[]).includes(value)) {
@@ -896,4 +897,63 @@ export async function purgeDeletedNotes(db: Database, now: Date = new Date()): P
     .returning({ id: notes.id });
 
   return purged.length;
+}
+
+export interface VersionDiff {
+  fromVersion: number | null;
+  toVersion: number | null;
+  toDraft: boolean;
+  title: TextDiff;
+  content: TextDiff;
+}
+
+/**
+ * Diffs two immutable versions of the same note. Both versions must belong
+ * to the note and the caller must be allowed to edit it. Identical versions
+ * produce an empty diff; oversized inputs throw content_too_large.
+ */
+export async function diffVersions(
+  db: Database,
+  noteId: string,
+  ownerId: string,
+  fromVersionNumber: number,
+  toVersionNumber: number,
+  shareToken?: string | null,
+): Promise<VersionDiff> {
+  const from = await getVersion(db, noteId, ownerId, fromVersionNumber, shareToken);
+  const to = await getVersion(db, noteId, ownerId, toVersionNumber, shareToken);
+  return {
+    fromVersion: from.versionNumber,
+    toVersion: to.versionNumber,
+    toDraft: false,
+    title: diffText(from.title, to.title),
+    content: diffText(from.content, to.content),
+  };
+}
+
+/**
+ * Diffs an immutable version against the current draft. This is the preview
+ * the restore flow shows before confirm: it answers "what changes if I
+ * restore vN right now?".
+ */
+export async function diffVersionToDraft(
+  db: Database,
+  noteId: string,
+  ownerId: string,
+  fromVersionNumber: number,
+  shareToken?: string | null,
+): Promise<VersionDiff> {
+  const version = await getVersion(db, noteId, ownerId, fromVersionNumber, shareToken);
+  // getVersion already enforces edit access; reuse the view for the draft.
+  const view = await getNoteView(db, noteId, ownerId, shareToken);
+  if (!view.draft) {
+    throw new NotFoundError("Draft not found");
+  }
+  return {
+    fromVersion: version.versionNumber,
+    toVersion: null,
+    toDraft: true,
+    title: diffText(version.title, view.draft.title),
+    content: diffText(version.content, view.draft.content),
+  };
 }
