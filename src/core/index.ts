@@ -24,3 +24,4 @@ export * from "./sharing";
 export * from "./reports";
 export * from "./account";
 export * from "./mcp";
+export * from "./diff";

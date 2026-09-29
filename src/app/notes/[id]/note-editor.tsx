@@ -1,6 +1,6 @@
 "use client";
 
-import { RotateCcw, Save } from "lucide-react";
+import { Eye, RotateCcw, Save, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { CopyLinkButton } from "@/components/copy-link-button";
@@ -26,6 +26,29 @@ interface NoteEditorProps {
   versions: VersionItem[];
 }
 
+interface DiffLine {
+  type: "same" | "add" | "del";
+  text: string;
+  oldLineNumber: number | null;
+  newLineNumber: number | null;
+}
+
+interface DiffHunk {
+  oldStart: number;
+  oldCount: number;
+  newStart: number;
+  newCount: number;
+  lines: DiffLine[];
+}
+
+interface VersionDiff {
+  from_version: number | null;
+  to_version: number | null;
+  to_draft: boolean;
+  title_diff: { hunks: DiffHunk[]; added: number; removed: number; empty: boolean };
+  content_diff: { hunks: DiffHunk[]; added: number; removed: number; empty: boolean };
+}
+
 const inputClass =
   "h-9 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-500 focus:outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100";
 const textareaClass =
@@ -44,6 +67,11 @@ export function NoteEditor(props: NoteEditorProps) {
   const [status, setStatus] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [diffVersion, setDiffVersion] = useState<number | null>(null);
+  const [diffMode, setDiffMode] = useState<"inline" | "side">("inline");
+  const [diffData, setDiffData] = useState<VersionDiff | null>(null);
+  const [diffLoading, setDiffLoading] = useState(false);
+  const [diffError, setDiffError] = useState<string | null>(null);
 
   async function handleSave() {
     setBusy(true);
@@ -107,6 +135,44 @@ export function NoteEditor(props: NoteEditorProps) {
       return;
     }
     setStatus(result.message ?? "Restore failed");
+  }
+
+  async function openDiff(versionNumber: number) {
+    setDiffVersion(versionNumber);
+    setDiffData(null);
+    setDiffError(null);
+    setDiffLoading(true);
+    try {
+      const params = new URLSearchParams({ to: "draft" });
+      if (props.shareToken) {
+        params.set("share_token", props.shareToken);
+      }
+      const res = await fetch(
+        `/api/v1/notes/${props.noteId}/versions/${versionNumber}/diff?${params.toString()}`,
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        const detail =
+          body && typeof body.detail === "string" ? body.detail : `Diff failed (${res.status})`;
+        setDiffError(detail);
+        return;
+      }
+      const body = (await res.json()) as VersionDiff;
+      setDiffData(body);
+    } catch {
+      setDiffError("Could not load the diff");
+    } finally {
+      setDiffLoading(false);
+    }
+  }
+
+  async function handleConfirmRestore() {
+    if (diffVersion === null) {
+      return;
+    }
+    await handleRestore(diffVersion);
+    setDiffVersion(null);
+    setDiffData(null);
   }
 
   return (
@@ -225,22 +291,205 @@ export function NoteEditor(props: NoteEditorProps) {
                       {version.createdAt.slice(0, 10)}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => handleRestore(version.versionNumber)}
-                    disabled={busy}
-                    title={`Restore v${version.versionNumber}`}
-                    aria-label={`Restore v${version.versionNumber}`}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-50 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
-                  >
-                    <RotateCcw className="h-4 w-4" />
-                  </button>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => openDiff(version.versionNumber)}
+                      disabled={busy}
+                      title={`Diff v${version.versionNumber} against draft`}
+                      aria-label={`Diff v${version.versionNumber} against draft`}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-50 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                    >
+                      <Eye className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openDiff(version.versionNumber)}
+                      disabled={busy}
+                      title={`Restore v${version.versionNumber}`}
+                      aria-label={`Restore v${version.versionNumber}`}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-50 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                    </button>
+                  </div>
                 </li>
               ))}
             </ul>
           )}
         </section>
+
+        {diffVersion !== null ? (
+          <section
+            aria-label={`Diff of version ${diffVersion}`}
+            className="flex flex-col gap-3 rounded-md border border-zinc-200 p-4 dark:border-zinc-800"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-medium">
+                Restore preview: v{diffVersion} against current draft
+              </h2>
+              <div className="flex items-center gap-1">
+                <div
+                  role="group"
+                  aria-label="Diff view"
+                  className="inline-flex overflow-hidden rounded-md border border-zinc-300 dark:border-zinc-700"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setDiffMode("inline")}
+                    aria-pressed={diffMode === "inline"}
+                    className={`h-7 px-3 text-xs font-medium ${diffMode === "inline" ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : "text-zinc-600 dark:text-zinc-300"}`}
+                  >
+                    Inline
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDiffMode("side")}
+                    aria-pressed={diffMode === "side"}
+                    className={`h-7 px-3 text-xs font-medium ${diffMode === "side" ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : "text-zinc-600 dark:text-zinc-300"}`}
+                  >
+                    Side by side
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDiffVersion(null);
+                    setDiffData(null);
+                    setDiffError(null);
+                  }}
+                  aria-label="Close diff"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            {diffLoading ? <p className="text-sm text-zinc-500">Loading diff…</p> : null}
+            {diffError ? <p className="text-sm text-red-600">{diffError}</p> : null}
+            {diffData && diffData.title_diff.empty && diffData.content_diff.empty ? (
+              <p className="text-sm text-zinc-500">
+                No differences: this version matches the current draft.
+              </p>
+            ) : null}
+            {diffData && (!diffData.title_diff.empty || !diffData.content_diff.empty) ? (
+              <div className="flex flex-col gap-3">
+                <p className="text-xs text-zinc-500">
+                  +{diffData.content_diff.added + diffData.title_diff.added} −
+                  {diffData.content_diff.removed + diffData.title_diff.removed} · markdown source
+                  shown, formatting preserved
+                </p>
+                {!diffData.title_diff.empty ? (
+                  <div className="flex flex-col gap-1">
+                    <h3 className="text-xs font-medium text-zinc-500">Title</h3>
+                    <DiffView hunks={diffData.title_diff.hunks} mode={diffMode} />
+                  </div>
+                ) : null}
+                {!diffData.content_diff.empty ? (
+                  <div className="flex flex-col gap-1">
+                    <h3 className="text-xs font-medium text-zinc-500">Content</h3>
+                    <DiffView hunks={diffData.content_diff.hunks} mode={diffMode} />
+                  </div>
+                ) : null}
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleConfirmRestore}
+                    disabled={busy || diffLoading}
+                    className={primaryButtonClass}
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    Confirm restore v{diffVersion}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDiffVersion(null);
+                      setDiffData(null);
+                      setDiffError(null);
+                    }}
+                    disabled={busy}
+                    className={secondaryButtonClass}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
       </div>
     </main>
+  );
+}
+
+function rowClass(type: DiffLine["type"]): string {
+  if (type === "add") {
+    return "bg-green-50 text-green-900 dark:bg-green-950 dark:text-green-200";
+  }
+  if (type === "del") {
+    return "bg-red-50 text-red-900 dark:bg-red-950 dark:text-red-200";
+  }
+  return "text-zinc-600 dark:text-zinc-400";
+}
+
+function DiffView({ hunks, mode }: { hunks: DiffHunk[]; mode: "inline" | "side" }) {
+  if (hunks.length === 0) {
+    return null;
+  }
+  if (mode === "side") {
+    return (
+      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-zinc-200 font-mono text-xs dark:border-zinc-800">
+        {hunks.map((hunk, hi) => (
+          <div key={hi} className="col-span-2 grid grid-cols-2 gap-px bg-zinc-200 dark:bg-zinc-800">
+            {hunk.lines.map((line, li) => (
+              <div
+                key={li}
+                className="col-span-2 grid grid-cols-2 gap-px bg-zinc-200 dark:bg-zinc-800"
+              >
+                <div
+                  className={`whitespace-pre-wrap break-words px-2 py-1 ${rowClass(line.type === "add" ? "same" : line.type)}`}
+                >
+                  {line.type === "add"
+                    ? ""
+                    : `${line.oldLineNumber ?? ""} ${line.type === "del" ? "− " : "  "}${line.text}`}
+                </div>
+                <div
+                  className={`whitespace-pre-wrap break-words px-2 py-1 ${rowClass(line.type === "del" ? "same" : line.type)}`}
+                >
+                  {line.type === "del"
+                    ? ""
+                    : `${line.newLineNumber ?? ""} ${line.type === "add" ? "+ " : "  "}${line.text}`}
+                </div>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return (
+    <div className="overflow-hidden rounded-md border border-zinc-200 font-mono text-xs dark:border-zinc-800">
+      {hunks.map((hunk, hi) => (
+        <div key={hi} className="border-b border-zinc-200 last:border-b-0 dark:border-zinc-800">
+          <p className="bg-zinc-100 px-2 py-1 text-zinc-500 dark:bg-zinc-800">
+            @@ −{hunk.oldStart},{hunk.oldCount} +{hunk.newStart},{hunk.newCount} @@
+          </p>
+          {hunk.lines.map((line, li) => (
+            <div
+              key={li}
+              className={`whitespace-pre-wrap break-words px-2 py-1 ${rowClass(line.type)}`}
+            >
+              {line.type === "add"
+                ? `+ ${line.text}`
+                : line.type === "del"
+                  ? `− ${line.text}`
+                  : `  ${line.text}`}
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
   );
 }
