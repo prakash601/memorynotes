@@ -25,3 +25,4 @@ export * from "./reports";
 export * from "./account";
 export * from "./mcp";
 export * from "./diff";
+export * from "./uploads";

@@ -8,6 +8,7 @@ import {
   deleteFolder,
   getOwnedNote,
   hardDeleteNote,
+  listNoteImageFiles,
   renameFolder,
   restoreNote,
   rotateShare,
@@ -23,6 +24,7 @@ import {
 } from "@/core";
 import { getDb } from "@/db";
 import { requireUserOrRedirect } from "@/lib/guard";
+import { deleteImageFile } from "@/lib/image-store";
 
 export async function createNoteAction(formData: FormData): Promise<void> {
   const user = await requireUserOrRedirect();
@@ -175,9 +177,12 @@ export async function hardDeleteNoteAction(formData: FormData): Promise<void> {
   if (String(formData.get("confirm") ?? "") !== "true") {
     return;
   }
-  await hardDeleteNote(getDb(), {
-    noteId: String(formData.get("noteId") ?? ""),
-    ownerId: user.id,
-  });
+  const db = getDb();
+  const noteId = String(formData.get("noteId") ?? "");
+  const orphanImages = await listNoteImageFiles(db, noteId);
+  await hardDeleteNote(db, { noteId, ownerId: user.id });
+  for (const name of orphanImages) {
+    await deleteImageFile(name);
+  }
   revalidatePath("/dashboard");
 }

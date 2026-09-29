@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
-import { purgeDeletedNotes, purgeExpiredLeases, purgeDeletedUsers } from "@/core";
+import {
+  listPurgeableImageFiles,
+  purgeDeletedNotes,
+  purgeExpiredLeases,
+  purgeDeletedUsers,
+} from "@/core";
 import { getDb } from "@/db";
 import { assertCronSecret, problemResponse } from "@/lib/http";
+import { deleteImageFile } from "@/lib/image-store";
 import { recordJobResult } from "@/lib/observability";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +25,11 @@ export async function POST(request: Request) {
 
   try {
     const db = getDb();
+    const orphanImages = await listPurgeableImageFiles(db);
     const purgedNotes = await purgeDeletedNotes(db);
+    for (const name of orphanImages) {
+      await deleteImageFile(name);
+    }
     const purgedUsers = await purgeDeletedUsers(db);
     const purgedLeases = await purgeExpiredLeases(db);
 

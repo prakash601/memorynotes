@@ -3,6 +3,7 @@ import type { Database } from "@/db";
 import {
   folders,
   noteDrafts,
+  noteImages,
   noteShares,
   noteTags,
   noteVersions,
@@ -40,6 +41,7 @@ import {
 } from "./tokens";
 import { assertContentSize, normalizeContent, normalizeTitle } from "./validation";
 import { diffText, type TextDiff } from "./diff";
+import { imageFileName } from "./uploads";
 
 function assertVisibility(value: string): asserts value is NoteVisibility {
   if (!(NOTE_VISIBILITIES as readonly string[]).includes(value)) {
@@ -1004,6 +1006,34 @@ export async function hardDeleteNote(
 
   await db.delete(notes).where(eq(notes.id, input.noteId));
   return { id: input.noteId };
+}
+
+/**
+ * Image files whose notes are past the retention window. Read before purging;
+ * the caller deletes the files after the rows cascade away.
+ */
+export async function listPurgeableImageFiles(
+  db: Database,
+  now: Date = new Date(),
+): Promise<string[]> {
+  const cutoff = new Date(now.getTime() - SOFT_DELETE_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  const rows = await db
+    .select({ id: noteImages.id, contentType: noteImages.contentType })
+    .from(noteImages)
+    .innerJoin(notes, eq(notes.id, noteImages.noteId))
+    // Drizzle's typed operators carry the column's type mapping; a raw sql
+    // template would hand postgres.js an untyped Date and fail.
+    .where(and(isNotNull(notes.deletedAt), lt(notes.deletedAt, cutoff)));
+  return rows.map((row) => imageFileName(row));
+}
+
+/** Storage filenames for one note's images. Read before hard-deleting. */
+export async function listNoteImageFiles(db: Database, noteId: string): Promise<string[]> {
+  const rows = await db
+    .select({ id: noteImages.id, contentType: noteImages.contentType })
+    .from(noteImages)
+    .where(eq(noteImages.noteId, noteId));
+  return rows.map((row) => imageFileName(row));
 }
 
 /**

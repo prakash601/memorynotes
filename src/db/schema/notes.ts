@@ -137,8 +137,32 @@ export const folders = pgTable(
 export type Folder = typeof folders.$inferSelect;
 export type NewFolder = typeof folders.$inferInsert;
 
+/**
+ * Images uploaded into a note's markdown (issue #71). Files live on the app
+ * domain's local disk; this row is the metadata. Cascades with the note so a
+ * purge or permanent delete removes the records (file sweep is best-effort in
+ * the cleanup paths).
+ */
+export const noteImages = pgTable(
+  "note_images",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    noteId: uuid("note_id")
+      .notNull()
+      .references(() => notes.id, { onDelete: "cascade" }),
+    ownerId: uuid("owner_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    contentType: text("content_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("note_images_note_idx").on(t.noteId)],
+);
+
 export type Note = typeof notes.$inferSelect;
 export type NewNote = typeof notes.$inferInsert;
 export type NoteTag = typeof noteTags.$inferSelect;
 export type NoteDraft = typeof noteDrafts.$inferSelect;
 export type NoteVersion = typeof noteVersions.$inferSelect;
+export type NoteImage = typeof noteImages.$inferSelect;

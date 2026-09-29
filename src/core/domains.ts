@@ -18,12 +18,18 @@ export function isUserContentPath(pathname: string): boolean {
   return pathname === "/n" || pathname.startsWith("/n/");
 }
 
+/** Uploaded note images, served from either host so share pages can embed them. */
+export function isUploadPath(pathname: string): boolean {
+  return pathname === "/uploads" || pathname.startsWith("/uploads/");
+}
+
 /** Assets the read page needs on whatever host it is served from. */
 export function isStaticAssetPath(pathname: string): boolean {
   return (
     pathname.startsWith("/_next/") ||
     pathname === "/favicon.ico" ||
     pathname === "/robots.txt" ||
+    isUploadPath(pathname) ||
     /\.[a-z0-9]+$/i.test(pathname)
   );
 }

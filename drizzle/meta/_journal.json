@@ -36,6 +36,13 @@
       "when": 1790676834316,
       "tag": "0004_link-access",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790677815059,
+      "tag": "0005_note-images",
+      "breakpoints": true
     }
   ]
 }

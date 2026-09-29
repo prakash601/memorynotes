@@ -37,3 +37,6 @@ next-env.d.ts
 
 # Local design docs (kept out of the repo by request)
 /docs/
+
+# Uploaded note images (local dev / single instance)
+/uploads/
