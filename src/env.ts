@@ -35,6 +35,8 @@ const envSchema = z.object({
   ALERT_WEBHOOK_URL: z.string().url().optional(),
   /** Support contact shown on the status page and in policies. */
   SUPPORT_EMAIL: z.string().email().optional(),
+  /** Local-disk directory for uploaded note images. Defaults to ./uploads. */
+  UPLOADS_DIR: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

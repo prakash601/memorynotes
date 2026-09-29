@@ -2,8 +2,9 @@
 
 import { Eye, RotateCcw, Save, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CopyLinkButton } from "@/components/copy-link-button";
+import { MAX_IMAGE_BYTES } from "@/core";
 import { publishAction, restoreAction, saveDraftAction } from "./actions";
 
 interface VersionItem {
@@ -72,6 +73,14 @@ export function NoteEditor(props: NoteEditorProps) {
   const [diffData, setDiffData] = useState<VersionDiff | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
+  const [codeLang, setCodeLang] = useState("ts");
+  const [showToc, setShowToc] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const revisionRef = useRef(props.initialRevision);
+  const lastSavedRef = useRef({ title: props.initialTitle, content: props.initialContent });
+  const autoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   async function handleSave() {
     setBusy(true);
@@ -87,6 +96,8 @@ export function NoteEditor(props: NoteEditorProps) {
 
     if (result.ok && result.revision !== undefined) {
       setRevision(result.revision);
+      revisionRef.current = result.revision;
+      lastSavedRef.current = { title, content };
       setConflict(false);
       setStatus("Draft saved");
       return;
@@ -175,6 +186,120 @@ export function NoteEditor(props: NoteEditorProps) {
     setDiffData(null);
   }
 
+  const headings = useMemo(
+    () =>
+      content.split("\n").flatMap((line, index) => {
+        const match = /^(#{1,6})\s+(.*)$/.exec(line);
+        return match ? [{ depth: match[1].length, text: match[2], line: index }] : [];
+      }),
+    [content],
+  );
+
+  function insertAtCursor(snippet: string) {
+    const el = textareaRef.current;
+    if (!el) {
+      setContent((current) => `${current}${snippet}`);
+      return;
+    }
+    const start = el.selectionStart ?? content.length;
+    const end = el.selectionEnd ?? content.length;
+    const next = `${content.slice(0, start)}${snippet}${content.slice(end)}`;
+    setContent(next);
+    const caret = start + snippet.length;
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(caret, caret);
+    });
+  }
+
+  function gotoLine(line: number) {
+    const el = textareaRef.current;
+    if (!el) {
+      return;
+    }
+    const offset = content.split("\n").slice(0, line).join("\n").length + (line > 0 ? 1 : 0);
+    el.focus();
+    el.setSelectionRange(offset, offset);
+  }
+
+  async function uploadImage(file: File) {
+    if (!file.type.startsWith("image/")) {
+      setStatus("Only image files can be uploaded");
+      return;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      setStatus("Image must be 5 MiB or smaller");
+      return;
+    }
+    setUploading(true);
+    setStatus(null);
+    try {
+      const csrf = (await fetch("/api/v1/csrf").then((res) => res.json())) as { token: string };
+      const form = new FormData();
+      form.append("file", file);
+      if (props.shareToken) {
+        form.append("share_token", props.shareToken);
+      }
+      const res = await fetch(`/api/v1/notes/${props.noteId}/images`, {
+        method: "POST",
+        headers: { "x-csrf-token": csrf.token },
+        body: form,
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+        setStatus(body?.detail ?? "Image upload failed");
+        return;
+      }
+      const body = (await res.json()) as { url: string };
+      insertAtCursor(`![${file.name}](${body.url})`);
+      setStatus("Image uploaded");
+    } catch {
+      setStatus("Image upload failed");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  // Autosave: debounce edits into the same draft path as manual save, so the
+  // 409 conflict handling is identical no matter which blocks were added.
+  useEffect(() => {
+    if (title === lastSavedRef.current.title && content === lastSavedRef.current.content) {
+      return;
+    }
+    if (conflict) {
+      return;
+    }
+    if (autoTimer.current) {
+      clearTimeout(autoTimer.current);
+    }
+    autoTimer.current = setTimeout(async () => {
+      const snapshot = { title, content };
+      const result = await saveDraftAction({
+        noteId: props.noteId,
+        shareToken: props.shareToken,
+        title: snapshot.title,
+        content: snapshot.content,
+        baseRevision: revisionRef.current,
+      });
+      if (result.ok && result.revision !== undefined) {
+        revisionRef.current = result.revision;
+        setRevision(result.revision);
+        lastSavedRef.current = snapshot;
+        setStatus("Autosaved");
+        return;
+      }
+      if (result.conflict) {
+        setConflict(true);
+        setStatus("Not saved: this note changed elsewhere");
+      }
+    }, 1500);
+    return () => {
+      if (autoTimer.current) {
+        clearTimeout(autoTimer.current);
+      }
+    };
+  }, [title, content, conflict, props.noteId, props.shareToken]);
+
   return (
     <main className="mx-auto w-full max-w-3xl flex-1 px-6 py-10">
       <div className="flex flex-col gap-6">
@@ -236,6 +361,120 @@ export function NoteEditor(props: NoteEditorProps) {
 
         {status ? <p className="text-sm text-zinc-500">{status}</p> : null}
 
+        <div
+          className="flex flex-wrap items-center gap-2"
+          role="toolbar"
+          aria-label="Editing tools"
+        >
+          <button
+            type="button"
+            onClick={() => insertAtCursor("- [ ] ")}
+            disabled={busy || uploading}
+            title="Insert task list item"
+            className={secondaryButtonClass}
+          >
+            Task
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              insertAtCursor("\n| Header | Header |\n| --- | --- |\n| Cell | Cell |\n")
+            }
+            disabled={busy || uploading}
+            title="Insert table"
+            className={secondaryButtonClass}
+          >
+            Table
+          </button>
+          <label className="sr-only" htmlFor="code-lang">
+            Code block language
+          </label>
+          <select
+            id="code-lang"
+            value={codeLang}
+            onChange={(event) => setCodeLang(event.target.value)}
+            disabled={busy || uploading}
+            title="Code block language"
+            className="h-9 rounded-md border border-zinc-300 bg-white px-2 text-sm text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+          >
+            {["ts", "js", "py", "go", "rs", "sh", "sql", "json", "md", "text"].map((lang) => (
+              <option key={lang} value={lang}>
+                {lang}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() =>
+              insertAtCursor(`\n\u0060\u0060\u0060${codeLang}\n\n\u0060\u0060\u0060\n`)
+            }
+            disabled={busy || uploading}
+            title="Insert code block"
+            className={secondaryButtonClass}
+          >
+            Code
+          </button>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={busy || uploading}
+            title="Upload image"
+            className={secondaryButtonClass}
+          >
+            {uploading ? "Uploading…" : "Image"}
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            className="hidden"
+            aria-label="Upload image"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file) {
+                void uploadImage(file);
+              }
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => setShowToc((value) => !value)}
+            disabled={busy}
+            title="Toggle table of contents"
+            aria-pressed={showToc}
+            className={secondaryButtonClass}
+          >
+            TOC{headings.length > 0 ? ` (${headings.length})` : ""}
+          </button>
+        </div>
+
+        {showToc ? (
+          <nav
+            aria-label="Table of contents"
+            className="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800"
+          >
+            {headings.length === 0 ? (
+              <p className="text-sm text-zinc-500">No headings yet. Start a line with #.</p>
+            ) : (
+              <ul className="flex flex-col gap-1">
+                {headings.map((heading) => (
+                  <li key={heading.line}>
+                    <button
+                      type="button"
+                      onClick={() => gotoLine(heading.line)}
+                      className="truncate text-left text-sm text-zinc-600 hover:underline dark:text-zinc-300"
+                      style={{ marginLeft: (heading.depth - 1) * 12 }}
+                    >
+                      {heading.text || "(empty heading)"}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </nav>
+        ) : null}
+
         <div className="flex flex-col gap-3">
           <label className="sr-only" htmlFor="note-title">
             Title
@@ -252,10 +491,19 @@ export function NoteEditor(props: NoteEditorProps) {
           </label>
           <textarea
             id="note-content"
+            ref={textareaRef}
             value={content}
             onChange={(event) => setContent(event.target.value)}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => {
+              event.preventDefault();
+              const file = event.dataTransfer.files?.[0];
+              if (file) {
+                void uploadImage(file);
+              }
+            }}
             rows={22}
-            placeholder="Write in markdown. Fenced code blocks are supported."
+            placeholder="Write in markdown. Drag an image here to upload it."
             className={textareaClass}
           />
         </div>

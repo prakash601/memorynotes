@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   getNoteView,
   hardDeleteNote,
+  listNoteImageFiles,
   listNoteTags,
   setFavorite,
   setNoteFolder,
@@ -15,6 +16,7 @@ import { getDb } from "@/db";
 import { authenticate } from "@/lib/auth";
 import { applyRateLimitHeaders, assertCsrf, parseJsonBody, problemResponse } from "@/lib/http";
 import { beginIdempotency } from "@/lib/idempotency";
+import { deleteImageFile } from "@/lib/image-store";
 import { limit } from "@/lib/rate-limit";
 import {
   serializeDraft,
@@ -187,7 +189,12 @@ export async function DELETE(request: Request, context: RouteContext) {
     const state = await limit("api_account_minute", principal.userId);
 
     if (permanent) {
-      const deleted = await hardDeleteNote(getDb(), { noteId: id, ownerId: principal.userId });
+      const db = getDb();
+      const orphanImages = await listNoteImageFiles(db, id);
+      const deleted = await hardDeleteNote(db, { noteId: id, ownerId: principal.userId });
+      for (const name of orphanImages) {
+        await deleteImageFile(name);
+      }
       const response = NextResponse.json({ id: deleted.id, permanently_deleted: true });
       return idempotency.complete(applyRateLimitHeaders(response, state));
     }

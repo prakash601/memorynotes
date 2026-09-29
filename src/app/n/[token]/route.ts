@@ -57,7 +57,9 @@ function htmlResponse(
       "content-security-policy": [
         "default-src 'none'",
         "style-src 'self'",
-        "img-src 'none'",
+        // Only our own uploads ever render as images (relative /uploads/
+        // URLs, served from this host); external images stay plain links.
+        "img-src 'self'",
         "font-src 'none'",
         "script-src 'none'",
         "base-uri 'none'",
@@ -70,6 +72,14 @@ function htmlResponse(
       ...extraHeaders,
     },
   });
+}
+
+function originOf(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
 }
 
 function notice(title: string, message: string): string {
@@ -174,7 +184,7 @@ async function serveResolved(
     `<p class="meta">${escapeHtml(meta)}</p>`,
     `<p class="actions">${actions.join("\n")}</p>`,
     `</header>`,
-    `<article class="content">${renderMarkdown(version.content)}</article>`,
+    `<article class="content">${renderMarkdown(version.content, { appOrigin: originOf(env.APP_URL) })}</article>`,
   ].join("\n");
 
   return htmlResponse(
