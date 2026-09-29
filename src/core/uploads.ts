@@ -4,6 +4,7 @@
  * lying filename or Content-Type. SVG is rejected outright (scriptable),
  * as is anything that is not a raster still we can serve safely.
  */
+import { createHash } from "node:crypto";
 import { ValidationError } from "./errors";
 
 /** 5 MiB per image, per issue #71. */
@@ -97,6 +98,15 @@ export function validateImageUpload(
     throw new ValidationError("Image content does not match its declared type");
   }
   return { contentType: sniffed, extension: TYPE_EXTENSIONS[sniffed], sizeBytes: bytes.length };
+}
+
+/**
+ * Idempotency fingerprint for an upload: the note plus the exact bytes. The
+ * same file retried under one Idempotency-Key replays; different bytes under
+ * the same key conflict instead of silently replacing the first upload.
+ */
+export function imageFingerprint(noteId: string, bytes: Uint8Array): string {
+  return createHash("sha256").update(noteId).update(bytes).digest("hex");
 }
 
 /** Storage filename for an image row: `<uuid>.<ext>`. */

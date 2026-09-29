@@ -20,6 +20,9 @@ export const RATE_LIMITS = {
   publish_account: { name: "publish_account", limit: 200, windowSeconds: 86_400 },
   api_token_minute: { name: "api_token_minute", limit: 120, windowSeconds: 60 },
   api_account_minute: { name: "api_account_minute", limit: 600, windowSeconds: 60 },
+  // Uploads are bounded by bytes, not requests: 100 x 5 MiB/hour caps one
+  // account at ~500 MiB/hour of stored images.
+  image_upload_hour: { name: "image_upload_hour", limit: 100, windowSeconds: 3_600 },
   mcp_token_minute: { name: "mcp_token_minute", limit: 60, windowSeconds: 60 },
   mcp_create_hour: { name: "mcp_create_hour", limit: 20, windowSeconds: 3_600 },
   read_ip_minute: { name: "read_ip_minute", limit: 1_000, windowSeconds: 60 },

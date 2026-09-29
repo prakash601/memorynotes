@@ -290,7 +290,7 @@ export function NoteEditor(props: NoteEditorProps) {
       }
       const res = await fetch(`/api/v1/notes/${props.noteId}/images`, {
         method: "POST",
-        headers: { "x-csrf-token": csrf.token },
+        headers: { "x-csrf-token": csrf.token, "idempotency-key": crypto.randomUUID() },
         body: form,
       });
       if (!res.ok) {
