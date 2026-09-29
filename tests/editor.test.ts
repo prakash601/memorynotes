@@ -5,6 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   createApiToken,
   createNote,
+  imageFingerprint,
   resolveDomainAccess,
   updateDraft,
   validateImageUpload,
@@ -137,11 +138,14 @@ describeWithDatabase("image upload and serving", () => {
 
   function uploadRequest(
     noteId: string,
-    options: { token?: string; file?: File | null } = {},
+    options: { token?: string; file?: File | null; idempotencyKey?: string } = {},
   ): Request {
     const headers: Record<string, string> = {};
     if (options.token) {
       headers.authorization = `Bearer ${options.token}`;
+    }
+    if (options.idempotencyKey) {
+      headers["idempotency-key"] = options.idempotencyKey;
     }
     const form = new FormData();
     if (options.file !== null) {
@@ -207,7 +211,56 @@ describeWithDatabase("image upload and serving", () => {
     expect(served.status).toBe(200);
     expect(served.headers.get("content-type")).toBe("image/png");
     expect(served.headers.get("x-content-type-options")).toBe("nosniff");
+  });
 
+  it("replays a retried upload instead of storing it twice", async () => {
+    const { noteId, token } = await seed();
+    const options = { token, idempotencyKey: "upload-once-1" };
+
+    const first = await uploadImageRoute(uploadRequest(noteId, options), ctx({ id: noteId }));
+    expect(first.status).toBe(201);
+    expect(first.headers.get("ratelimit-limit")).toBe("100");
+    const firstBody = await first.text();
+
+    const second = await uploadImageRoute(uploadRequest(noteId, options), ctx({ id: noteId }));
+    expect(second.status).toBe(201);
+    expect(second.headers.get("idempotency-replayed")).toBe("true");
+    expect(await second.text()).toBe(firstBody);
+
+    const [count] = await sql<{ count: number }[]>`
+      select count(*)::int as count from note_images where note_id = ${noteId}
+    `;
+    expect(count.count).toBe(1);
+  });
+
+  it("rejects a different file under the same idempotency key", async () => {
+    const { noteId, token } = await seed();
+    const key = "upload-conflict-1";
+    const first = await uploadImageRoute(
+      uploadRequest(noteId, { token, idempotencyKey: key }),
+      ctx({ id: noteId }),
+    );
+    expect(first.status).toBe(201);
+
+    const other = await uploadImageRoute(
+      uploadRequest(noteId, {
+        token,
+        idempotencyKey: key,
+        file: new File([JPEG as Uint8Array<ArrayBuffer>], "other.jpg", { type: "image/jpeg" }),
+      }),
+      ctx({ id: noteId }),
+    );
+    expect(other.status).toBe(422);
+    expect(await other.json()).toMatchObject({ code: "validation" });
+  });
+
+  it("fingerprints the exact bytes, not just the note", () => {
+    expect(imageFingerprint("n1", PNG)).toBe(imageFingerprint("n1", PNG));
+    expect(imageFingerprint("n1", PNG)).not.toBe(imageFingerprint("n1", JPEG));
+    expect(imageFingerprint("n1", PNG)).not.toBe(imageFingerprint("n2", PNG));
+  });
+
+  it("serves a missing image as 404", async () => {
     const missing = await serveImage(
       new Request(`${BASE}/uploads/00000000-0000-4000-8000-000000000000.png`),
       ctx({
