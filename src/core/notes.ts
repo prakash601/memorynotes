@@ -882,6 +882,130 @@ export async function softDeleteNote(
   });
 }
 
+export interface DeletedNoteItem {
+  id: string;
+  title: string;
+  visibility: NoteVisibility;
+  revision: number;
+  folderId: string | null;
+  deletedAt: Date;
+  updatedAt: Date;
+  publishedVersionNumber: number | null;
+}
+
+/** Notes in the trash: owned, soft-deleted, newest first. */
+export async function listDeletedNotes(db: Database, ownerId: string): Promise<DeletedNoteItem[]> {
+  const rows = await db
+    .select({
+      id: notes.id,
+      visibility: notes.visibility,
+      title: noteDrafts.title,
+      revision: noteDrafts.revision,
+      folderId: notes.folderId,
+      deletedAt: notes.deletedAt,
+      updatedAt: noteDrafts.updatedAt,
+      publishedVersionNumber: noteVersions.versionNumber,
+    })
+    .from(notes)
+    .innerJoin(noteDrafts, eq(noteDrafts.noteId, notes.id))
+    .leftJoin(noteVersions, eq(noteVersions.id, notes.publishedVersionId))
+    .where(and(eq(notes.ownerId, ownerId), isNotNull(notes.deletedAt)))
+    .orderBy(desc(notes.deletedAt));
+
+  return rows.map((row) => ({
+    id: row.id,
+    visibility: row.visibility,
+    title: row.title,
+    revision: row.revision,
+    folderId: row.folderId,
+    deletedAt: row.deletedAt as Date,
+    updatedAt: row.updatedAt,
+    publishedVersionNumber: row.publishedVersionNumber ?? null,
+  }));
+}
+
+/**
+ * Restores a trashed note. The old share links stay dead: soft-delete revoked
+ * them, and restore issues a fresh canonical link instead of reviving one.
+ */
+export async function restoreNote(
+  db: Database,
+  input: { noteId: string; ownerId: string; now?: Date },
+): Promise<{ note: Note; share: NoteShare; rawToken: string }> {
+  const now = input.now ?? new Date();
+
+  return db.transaction(async (tx) => {
+    const [trashed] = await tx
+      .select({ id: notes.id })
+      .from(notes)
+      .where(
+        and(
+          eq(notes.id, input.noteId),
+          eq(notes.ownerId, input.ownerId),
+          isNotNull(notes.deletedAt),
+        ),
+      )
+      .limit(1);
+    if (!trashed) {
+      throw new NotFoundError("Note not found");
+    }
+
+    const [note] = await tx
+      .update(notes)
+      .set({ deletedAt: null, updatedAt: now })
+      .where(eq(notes.id, input.noteId))
+      .returning();
+
+    const rawToken = generateShareToken();
+    const [share] = await tx
+      .insert(noteShares)
+      .values({
+        noteId: input.noteId,
+        access: "view",
+        tokenHash: hashToken(rawToken),
+        tokenCiphertext: encryptToken(rawToken, primaryShareSecret()),
+        tokenPrefix: tokenPrefix(rawToken),
+        expiresAt: defaultExpiry(now),
+        createdBy: input.ownerId,
+      })
+      .returning();
+
+    return { note, share, rawToken };
+  });
+}
+
+/**
+ * Permanently deletes a trashed note. Cascades remove drafts, versions, and
+ * shares. Only trash contents can be hard-deleted: a live note must be
+ * soft-deleted first so the 30-day window always applies.
+ */
+export async function hardDeleteNote(
+  db: Database,
+  input: { noteId: string; ownerId: string },
+): Promise<{ id: string }> {
+  const [trashed] = await db
+    .select({ id: notes.id })
+    .from(notes)
+    .where(
+      and(eq(notes.id, input.noteId), eq(notes.ownerId, input.ownerId), isNotNull(notes.deletedAt)),
+    )
+    .limit(1);
+  if (!trashed) {
+    const [live] = await db
+      .select({ id: notes.id })
+      .from(notes)
+      .where(and(eq(notes.id, input.noteId), eq(notes.ownerId, input.ownerId)))
+      .limit(1);
+    if (live) {
+      throw new ValidationError("Move the note to trash before permanently deleting it");
+    }
+    throw new NotFoundError("Note not found");
+  }
+
+  await db.delete(notes).where(eq(notes.id, input.noteId));
+  return { id: input.noteId };
+}
+
 /**
  * Purges notes soft-deleted longer than the retention window. Cascades remove
  * drafts, versions, and shares. Reports survive with a null note reference.

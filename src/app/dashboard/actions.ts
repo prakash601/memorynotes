@@ -7,7 +7,9 @@ import {
   createNote,
   deleteFolder,
   getOwnedNote,
+  hardDeleteNote,
   renameFolder,
+  restoreNote,
   rotateShare,
   setFavorite,
   setNoteFolder,
@@ -155,6 +157,27 @@ export async function moveNoteAction(formData: FormData): Promise<void> {
     noteId: String(formData.get("noteId") ?? ""),
     ownerId: user.id,
     folderId: folderId || null,
+  });
+  revalidatePath("/dashboard");
+}
+
+export async function restoreNoteAction(formData: FormData): Promise<void> {
+  const user = await requireUserOrRedirect();
+  await restoreNote(getDb(), {
+    noteId: String(formData.get("noteId") ?? ""),
+    ownerId: user.id,
+  });
+  revalidatePath("/dashboard");
+}
+
+export async function hardDeleteNoteAction(formData: FormData): Promise<void> {
+  const user = await requireUserOrRedirect();
+  if (String(formData.get("confirm") ?? "") !== "true") {
+    return;
+  }
+  await hardDeleteNote(getDb(), {
+    noteId: String(formData.get("noteId") ?? ""),
+    ownerId: user.id,
   });
   revalidatePath("/dashboard");
 }

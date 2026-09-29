@@ -1,6 +1,14 @@
-import { Pin, RefreshCw, Star, Trash2 } from "lucide-react";
+import { Pin, RefreshCw, RotateCcw, Star, Trash2 } from "lucide-react";
 import Link from "next/link";
-import { buildFolderTree, countNotesByFolder, listFolders, listNotes, listOwnedTags } from "@/core";
+import {
+  SOFT_DELETE_RETENTION_DAYS,
+  buildFolderTree,
+  countNotesByFolder,
+  listDeletedNotes,
+  listFolders,
+  listNotes,
+  listOwnedTags,
+} from "@/core";
 import { getDb } from "@/db";
 import { requireUserOrRedirect } from "@/lib/guard";
 import { buildShareUrl } from "@/lib/share-url";
@@ -9,9 +17,11 @@ import {
   createNoteAction,
   deleteFolderAction,
   deleteNoteAction,
+  hardDeleteNoteAction,
   moveNoteAction,
   renameFolderAction,
   renameNoteAction,
+  restoreNoteAction,
   rotateShareAction,
   setExpiryAction,
   setTagsAction,
@@ -41,6 +51,8 @@ type DashboardSearchParams = {
   tag?: string;
   favorite?: string;
   folder?: string;
+  trash?: string;
+  confirm_delete?: string;
 };
 
 export default async function DashboardPage({
@@ -60,12 +72,15 @@ export default async function DashboardPage({
       : activeFolder === "none"
         ? { folderId: null }
         : { folderId: activeFolder };
-  const [notes, allTags, folderRows, folderCounts, unfiledNotes] = await Promise.all([
-    listNotes(getDb(), user.id, { q, tag, favoriteOnly, ...folderFilter }),
+  const trashMode = params.trash === "1";
+  const confirmDeleteId = params.confirm_delete?.trim() ? params.confirm_delete.trim() : null;
+  const [notes, allTags, folderRows, folderCounts, unfiledNotes, trashedNotes] = await Promise.all([
+    trashMode ? [] : listNotes(getDb(), user.id, { q, tag, favoriteOnly, ...folderFilter }),
     listOwnedTags(getDb(), user.id),
     listFolders(getDb(), user.id),
     countNotesByFolder(getDb(), user.id),
-    listNotes(getDb(), user.id, { q, tag, favoriteOnly, folderId: null }),
+    trashMode ? [] : listNotes(getDb(), user.id, { q, tag, favoriteOnly, folderId: null }),
+    listDeletedNotes(getDb(), user.id),
   ]);
   const folderTree = buildFolderTree(folderRows);
   const renderFolderNodes = (nodes: typeof folderTree): React.ReactNode =>
@@ -178,6 +193,12 @@ export default async function DashboardPage({
             >
               Unfiled ({unfiledNotes.length})
             </Link>
+            <Link
+              href="/dashboard?trash=1"
+              className={`${smallButtonClass} ${trashMode ? "bg-zinc-100 dark:bg-zinc-800" : ""}`}
+            >
+              Trash ({trashedNotes.length})
+            </Link>
             {renderFolderNodes(folderTree)}
           </div>
           <div className="flex flex-wrap gap-2">
@@ -231,7 +252,94 @@ export default async function DashboardPage({
           </button>
         </form>
 
-        {notes.length === 0 ? (
+        {trashMode ? (
+          <section aria-label="Trash" className="flex flex-col gap-2">
+            <div className="flex items-baseline justify-between gap-4">
+              <h2 className="text-sm font-medium">Trash</h2>
+              <span className="text-sm text-zinc-500">
+                Notes are permanently deleted {SOFT_DELETE_RETENTION_DAYS} days after trashing.
+              </span>
+            </div>
+            {trashedNotes.length === 0 ? (
+              <p className="text-sm text-zinc-500">Trash is empty.</p>
+            ) : (
+              <ul className="divide-y divide-zinc-200 border-y border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
+                {trashedNotes.map((note) => {
+                  const daysLeft = Math.max(
+                    0,
+                    SOFT_DELETE_RETENTION_DAYS -
+                      // eslint-disable-next-line react-hooks/purity -- server-rendered once per request; stable for this response.
+                      Math.floor((Date.now() - note.deletedAt.getTime()) / (24 * 60 * 60 * 1000)),
+                  );
+                  const confirming = confirmDeleteId === note.id;
+                  return (
+                    <li key={note.id} className="flex flex-col gap-2 py-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{note.title || "Untitled"}</p>
+                          <p className="mt-0.5 text-xs text-zinc-500">
+                            Trashed {note.deletedAt.toISOString().slice(0, 10)} · gone forever in{" "}
+                            {daysLeft} {daysLeft === 1 ? "day" : "days"}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <form action={restoreNoteAction}>
+                            <input type="hidden" name="noteId" value={note.id} />
+                            <button
+                              type="submit"
+                              title={`Restore ${note.title || "note"}`}
+                              aria-label={`Restore ${note.title || "Untitled"}`}
+                              className={iconButtonClass}
+                            >
+                              <RotateCcw className="h-4 w-4" />
+                            </button>
+                          </form>
+                          {confirming ? null : (
+                            <Link
+                              href={`/dashboard?trash=1&confirm_delete=${note.id}`}
+                              title="Delete forever"
+                              aria-label={`Delete ${note.title || "Untitled"} forever`}
+                              className={`${iconButtonClass} text-red-600 dark:text-red-400`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Link>
+                          )}
+                        </div>
+                      </div>
+                      {confirming ? (
+                        <div className="flex flex-wrap items-center gap-2 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
+                          <span>
+                            Permanently delete &ldquo;{note.title || "Untitled"}&rdquo;? This cannot
+                            be undone.
+                          </span>
+                          <form action={hardDeleteNoteAction}>
+                            <input type="hidden" name="noteId" value={note.id} />
+                            <input type="hidden" name="confirm" value="true" />
+                            <button
+                              type="submit"
+                              className="rounded-md bg-red-700 px-3 py-1 text-sm font-medium text-white hover:bg-red-600"
+                            >
+                              Delete forever
+                            </button>
+                          </form>
+                          <Link
+                            href="/dashboard?trash=1"
+                            className="rounded-md border border-red-300 px-3 py-1 hover:bg-red-100 dark:hover:bg-red-900"
+                          >
+                            Keep
+                          </Link>
+                        </div>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            <Link href="/dashboard" className={`${smallButtonClass} self-start`}>
+              Back to notes
+            </Link>
+          </section>
+        ) : notes.length === 0 ? (
           <p className="text-sm text-zinc-500">
             {filtering
               ? "No notes match these filters."
