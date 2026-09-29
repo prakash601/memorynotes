@@ -31,6 +31,20 @@ export const metadata: Metadata = {
     capable: true,
     statusBarStyle: "default",
     title: "MemoryNotes",
+    startupImage: [
+      {
+        url: "/splash/apple-splash-1170x2532.png",
+        media: "(device-width: 390px) and (device-height: 844px)",
+      },
+      {
+        url: "/splash/apple-splash-1536x2048.png",
+        media: "(device-width: 768px) and (device-height: 1024px)",
+      },
+      {
+        url: "/splash/apple-splash-2048x2732.png",
+        media: "(device-width: 1024px) and (device-height: 1366px)",
+      },
+    ],
   },
   icons: {
     icon: [

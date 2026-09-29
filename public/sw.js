@@ -1,6 +1,14 @@
 /* MemoryNotes offline service worker (issue #84). */
 const CACHE = "memorynotes-v1";
-const SHELL = ["/", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"];
+const SHELL = [
+  "/",
+  "/manifest.webmanifest",
+  "/icons/icon-192.png",
+  "/icons/icon-512.png",
+  "/splash/apple-splash-1170x2532.png",
+  "/splash/apple-splash-1536x2048.png",
+  "/splash/apple-splash-2048x2732.png",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -50,6 +58,7 @@ self.addEventListener("fetch", (event) => {
   if (
     url.pathname.startsWith("/_next/static/") ||
     url.pathname.startsWith("/icons/") ||
+    url.pathname.startsWith("/splash/") ||
     url.pathname === "/manifest.webmanifest"
   ) {
     event.respondWith(
