@@ -3,6 +3,8 @@ import {
   getOrCreateShare,
   getShareView,
   revokeShare,
+  setShareMaxViews,
+  setSharePassword,
   updateShare,
   type ShareExpiryOption,
 } from "@/core";
@@ -19,6 +21,10 @@ type RouteContext = { params: Promise<{ id: string }> };
 interface ShareBody {
   access?: string;
   expires_in?: ShareExpiryOption;
+  /** Set a link password; null removes it. Undefined leaves it unchanged. */
+  password?: string | null;
+  /** Set a view limit (1 = view-once); null removes it. */
+  max_views?: number | null;
 }
 
 export async function GET(request: Request, context: RouteContext) {
@@ -72,15 +78,32 @@ export async function PATCH(request: Request, context: RouteContext) {
     }
 
     const db = getDb();
-    const share = await updateShare(db, {
-      noteId: id,
-      ownerId: principal.userId,
-      access: body.access,
-      expiresIn: body.expires_in,
-    });
+    if (body.access !== undefined || body.expires_in !== undefined) {
+      await updateShare(db, {
+        noteId: id,
+        ownerId: principal.userId,
+        access: body.access,
+        expiresIn: body.expires_in,
+      });
+    }
+
+    if (body.password !== undefined) {
+      await setSharePassword(db, {
+        noteId: id,
+        ownerId: principal.userId,
+        password: body.password,
+      });
+    }
+    if (body.max_views !== undefined) {
+      await setShareMaxViews(db, {
+        noteId: id,
+        ownerId: principal.userId,
+        maxViews: body.max_views,
+      });
+    }
 
     const view = await getShareView(db, id, principal.userId);
-    const response = NextResponse.json({ share: view ?? serializeShare(share, null) });
+    const response = NextResponse.json({ share: view });
     return idempotency.complete(response);
   } catch (error) {
     return problemResponse(error);

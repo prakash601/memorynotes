@@ -29,6 +29,13 @@
       "when": 1790598394294,
       "tag": "0003_folders",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790676834316,
+      "tag": "0004_link-access",
+      "breakpoints": true
     }
   ]
 }
